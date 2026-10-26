@@ -135,6 +135,25 @@ NOISE = [  # roundups and betting content: not breaking injury news
     "injury roundup", "injury tracker", "injury news:", "every injury", "all the injuries",
     "picks", "prediction", "predictions", "power rankings", "mock draft",
 ]
+# Feature / opinion / controversy / human-interest headlines. They can mention
+# an injury without reporting any change in the player's status, so they never
+# trigger an UPDATE and never start a new story.
+SOFT_NEWS = [
+    "cheer", "cheers", "cheered", "students", "school", "kids", "teacher", "classroom",
+    "charity", "donation", "donates", "donated", "foundation", "community", "surprise",
+    "surprises", "tribute", "honors", "honored", "birthday", "wedding", "fans react",
+    "reacts", "reaction", "reactions", "weird", "strange", "bizarre", "odd", "handling",
+    "handled", "investigate", "investigates", "investigation", "fined", "fine", "criticism",
+    "criticized", "criticizes", "slams", "rips", "blasts", "defends", "responds", "opinion",
+    "column", "mailbag", "podcast", "takeaways", "grades", "ranking", "rankings", "legacy",
+    "contract", "extension", "trade", "trade rumors", "commercial", "documentary",
+    "jersey", "throwback", "anniversary", "remembers", "recalls", "looks back",
+]
+# Question/explainer headlines ("How long will X be out?") only count as an
+# update if the headline also contains a concrete diagnosis or status.
+EXPLAINER = re.compile(r"^(?:why|how|what|should|could|is|are|will|does|did)\b|\?\s*$")
+NOT_STATUS = {"hospital", "in pain"}  # too vague to count as a status change
+
 STOPWORDS = set(
     "a an the and or of to in on at for with from by as is are was were be been his her "
     "their its after before during vs v. vs. says say said will not out game games "
@@ -172,6 +191,7 @@ def compile_terms(terms):
 SEVERE_RX, HIGH_RX, MEDIUM_RX, LOW_RX = map(compile_terms, (SEVERE, HIGH, MEDIUM, LOW))
 POSITIVE_RX, NOISE_RX = compile_terms(POSITIVE), compile_terms(NOISE)
 MILESTONE_RX = compile_terms(MILESTONES)
+SOFT_RX = compile_terms(SOFT_NEWS)
 MECHANISM_RX = [(t, phrase_pattern(t), pts) for t, pts in MECHANISM.items()]
 QB_RX = phrase_pattern("quarterback"), phrase_pattern("qb")
 STAR_RX = phrase_pattern("star")
@@ -590,7 +610,17 @@ def analyze(item: dict):
     if player is None and noise:
         return None  # generic roundup / betting piece with no star attached
 
+    # What does the headline itself report? (Article summaries can mention
+    # old details, so updates are judged on the headline alone.)
+    soft = bool(matches(SOFT_RX, title_n))
+    title_severe = matches(SEVERE_RX, title_n)
+    title_status = [t for t in title_severe + matches(HIGH_RX, title_n) if t not in NOT_STATUS]
+    title_status += milestones
+    explainer = bool(EXPLAINER.search(title_n)) and not (title_severe or milestones)
+
     return {
+        "soft": soft,
+        "update_terms": [] if (soft or explainer) else sorted(set(title_status)),
         "player": player["name"] if player else None,
         "tier": player["tier"] if player else None,
         "league": league,
@@ -764,7 +794,9 @@ def merge_item(state, item, info):
     s["noise"] = s["noise"] and info["noise"]  # one real report clears the noise flag
     s["terms"] = sorted(set(s["terms"]) | set(info["terms"]))
     s["milestones"] = sorted(set(s.get("milestones", [])) | set(info["milestones"]))
-    s["latest_headline"] = item["title"]
+    if info["update_terms"]:
+        s["pending"] = sorted(set(s.get("pending", [])) | set(info["update_terms"]))
+        s["latest_headline"] = item["title"]
     if info["significance"] >= s["significance"]:
         s["significance"] = info["significance"]
         s["headline"] = item["title"]  # newest headline with the most serious wording
@@ -899,12 +931,31 @@ def process_items(state, items) -> set:
         info = analyze(item)
         if info is None:
             continue
+        if info["soft"]:
+            # Feature/opinion piece: at most it adds buzz to an injury that
+            # happened in the last 12 hours ("fans react to X's injury").
+            touched |= credit_fresh_story(state, item, info)
+            continue
         new_items += 1
         sid = merge_item(state, item, info)
         touched.add(sid)
         touched |= credit_other_players(state, item, info, sid)
     print(f"{new_items} new injury headlines, {len(touched)} stories touched")
     return touched
+
+
+def credit_fresh_story(state, item, info) -> set:
+    if not info["player"]:
+        return set()
+    for sid, s in state["stories"].items():
+        if (s.get("player") == info["player"]
+                and NOW - parse_iso(s["first_seen"]) <= timedelta(hours=12)):
+            if item["source"] not in s["sources"]:
+                s["sources"].append(item["source"])
+            s.setdefault("source_seen", {})[item["source"]] = iso(NOW)
+            record_buzz(s)
+            return {sid}
+    return set()
 
 
 def credit_other_players(state, item, info, primary_sid) -> set:
@@ -931,6 +982,9 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
     threshold = SETTINGS["alert_threshold"]
     high = SETTINGS["high_priority_threshold"]
     alerts = []
+    deferred = set()
+    # Also revisit stories holding news that was waiting out the cooldown.
+    touched = set(touched) | {sid for sid, st in state["stories"].items() if st.get("pending")}
     for sid in touched:
         s = state["stories"][sid]
         parts = score_story(s)
@@ -942,8 +996,9 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
                 s.get("notified") or parts["total"] >= threshold):
             # Once you've been alerted about a story, every real development
             # gets an update, even after the initial buzz has died down.
+            # Only details reported in a news headline count (see analyze()).
             already = set(s["alerted_terms"])
-            new_all = [t for t in s["terms"] + s.get("milestones", [])
+            new_all = [t for t in s.get("pending", [])
                        if not any(t in a or a in t for a in already)]
             new_severe = [t for t in new_all if t in SEVERE]
             became_high = s["alerted_score"] < high <= parts["total"]
@@ -955,8 +1010,11 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
             # send if we haven't messaged about this story in the last little while.
             if new_severe or became_high or (new_all and cooled):
                 alerts.append((sid, parts, "UPDATE", new_all))
+            elif new_all:
+                deferred.add(sid)  # real news, but we just messaged about this story
 
     alerts.sort(key=lambda a: -a[1]["total"])
+    failed = set()
     for sid, parts, kind, new_terms in alerts:
         s = state["stories"][sid]
         playing = bool(s.get("team")) and s["team"] in live_teams.get(s["league"], set())
@@ -965,8 +1023,11 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
                 s["updates_sent"] += 1
             s.update(alerted=True, notified=True, alerted_score=parts["total"], last_alert=iso(NOW),
                      alerted_terms=sorted(set(s["terms"]) | set(s.get("milestones", []))))
-        # If sending failed, the story stays un-alerted and is retried next run.
-    print(f"Sent {len(alerts)} alert(s)")
+        else:
+            failed.add(sid)  # retried next run
+    for sid in touched - failed - deferred:
+        state["stories"][sid]["pending"] = []
+    print(f"Sent {len(alerts) - len(failed)} alert(s)")
 
 
 def tick():

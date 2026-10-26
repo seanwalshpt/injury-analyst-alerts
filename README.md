@@ -26,6 +26,8 @@ Automated sports injury monitoring for **The Injury Analyst**. GitHub runs `moni
 - once you've been alerted about a story, its updates come through even after the initial buzz dies down
 - maximum 8 updates per storyline
 
+An update only counts if **the headline itself reports a status change** (a diagnosis, setback, ruled out, surgery, return…). Feature, opinion, controversy, and human-interest pieces ("students cheer up teacher with Hurts video", "NFL investigates Ravens' injury-report handling", "Why the Ravens' handling of Lamar is weird") never trigger updates or start stories. Question headlines ("How long will X be out?") count only when they include a concrete diagnosis. Fan-reaction coverage within 12 hours of a new injury still adds to its buzz.
+
 **What's covered:** in-game injuries, practice injuries, players held out before games, and medical/illness news (blood clots, cardiac, hospitalizations), not just orthopedic injuries. Routine rest days and "load management" are scored low.
 
 **Buzz is measured over the last 6 hours**, but a story also remembers its peak coverage, which fades gradually over 3 days (`storyline_heat_hours`). So the next-day MRI result on an injury everyone was talking about last night still scores like a big story, shown as "buzz (carried over)" in the alert. Headlines covering several players ("Jalen Williams, Jalen Suggs injuries…") count toward each player's storyline, and when a headline names several players, the injury is credited to the one named closest to the injury wording.
