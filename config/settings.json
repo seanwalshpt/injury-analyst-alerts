@@ -6,7 +6,10 @@
 
   "max_story_age_hours": 3,
   "story_merge_window_hours": 36,
-  "max_updates_per_story": 3,
+  "storyline_window_days": 30,
+  "buzz_window_hours": 6,
+  "update_cooldown_minutes": 30,
+  "max_updates_per_story": 8,
 
   "league_multiplier": {
     "nfl": 1.0,
@@ -24,14 +27,21 @@
       "NFL \"won't return\" OR \"will not return\"",
       "NFL MRI",
       "NFL torn",
-      "quarterback injury"
+      "quarterback injury",
+      "NFL injured practice",
+      "NFL \"blood clot\" OR hospitalized OR illness OR \"medical condition\"",
+      "NFL \"held out\" OR \"will not play\" OR \"won't play\"",
+      "NFL \"designated to return\" OR activated OR \"cleared to return\""
     ],
     "nba": [
       "NBA injury",
       "NBA \"ruled out\"",
       "NBA \"won't return\" OR \"will not return\"",
       "NBA MRI",
-      "NBA torn"
+      "NBA torn",
+      "NBA \"blood clot\" OR hospitalized OR illness OR \"medical condition\"",
+      "NBA \"will not play\" OR \"won't play\" OR \"out indefinitely\"",
+      "NBA \"cleared to return\" OR \"set to return\""
     ],
     "mlb": [
       "MLB injury",

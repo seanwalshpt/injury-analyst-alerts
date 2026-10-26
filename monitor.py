@@ -55,6 +55,12 @@ SEVERE = [  # 25 pts: likely long-term or visually dramatic
     "broken foot", "broken wrist", "broken finger", "broken collarbone", "broken rib",
     "broken ribs", "broken bone", "fractured", "fracture", "dislocated", "dislocation", "surgery",
     "career-threatening", "neck injury", "spinal",
+    # Medical (non-orthopedic) conditions
+    "blood clot", "blood clots", "clot", "clots", "dvt", "deep vein thrombosis",
+    "pulmonary embolism", "embolism", "cardiac", "cardiac arrest", "heart condition",
+    "heart issue", "heart attack", "myocarditis", "arrhythmia", "collapsed on", "seizure",
+    "suffered a stroke", "had a stroke", "brain bleed", "life-threatening", "icu", "intensive care",
+    "out indefinitely",
 ]
 HIGH = [  # 18 pts: left the game / real concern
     "won't return", "will not return", "not return", "ruled out for the rest",
@@ -65,17 +71,35 @@ HIGH = [  # 18 pts: left the game / real concern
     "ambulance", "hospital", "hospitalized", "went down", "goes down", "down on the field",
     "down on the court", "injury scare", "in pain", "will miss", "to miss", "sidelined",
     "ruled out", "injured reserve", "10-day il", "15-day il", "60-day il", "injured list",
+    # Held out before a game
+    "held out", "won't play", "will not play",
+    # Practice injuries
+    "injured in practice", "injured at practice", "hurt in practice", "hurt at practice",
+    "practice injury", "left practice", "leaves practice", "exits practice",
+    # Medical / illness storylines
+    "medical condition", "medical issue", "health scare", "health issue", "non-football injury",
+    "appendicitis", "appendectomy", "pneumonia", "infection", "kidney", "diagnosed",
+    "diagnosis", "setback", "aggravated", "re-injured", "reinjured", "further tests",
+    "more tests", "underwent tests", "undergo tests",
+]
+# Milestone news on an existing storyline (worth an UPDATE even though it's
+# good news): someone you've been following is getting back on the field.
+MILESTONES = [
+    "cleared", "activated", "reinstated", "returns to practice", "back at practice",
+    "set to return", "expected to return", "will return", "will play", "will start",
+    "designated to return", "21-day window", "back in lineup", "back in the lineup",
 ]
 MEDIUM = [  # 12 pts: injury mentioned, severity unclear
     "questionable to return", "doubtful to return", "being evaluated", "evaluated",
     "medical tent", "blue tent", "injured", "injury", "injuries", "injures", "hurt",
     "hamstring", "ankle", "knee", "shoulder", "groin", "calf", "foot", "hip", "wrist",
     "elbow", "oblique", "quad", "back spasms", "sprain", "sprained", "strain", "strained",
-    "bruise", "contusion", "illness",
+    "bruise", "contusion", "illness", "sick", "flu", "virus", "medical", "hospital visit",
 ]
 LOW = [  # 5 pts: routine status news
     "injury report", "day-to-day", "limited practice", "did not practice", "dnp",
-    "questionable", "doubtful", "probable", "load management",
+    "questionable", "doubtful", "probable", "load management", "inactive", "sit out",
+    "sits out", "to sit", "will sit", "rest day",
 ]
 POSITIVE = [  # good news: caps severity so "cleared to return" doesn't alert
     "cleared", "activated", "reinstated", "returns to practice", "back from injury",
@@ -114,6 +138,11 @@ STOPWORDS = set(
 # Text helpers
 # ---------------------------------------------------------------------------
 
+def deaccent(text: str) -> str:
+    text = unicodedata.normalize("NFKD", text or "")
+    return "".join(c for c in text if not unicodedata.combining(c)).replace("\u2019", "'")
+
+
 def normalize(text: str) -> str:
     """Lowercase, strip accents, unify quotes and whitespace."""
     text = unicodedata.normalize("NFKD", text or "")
@@ -132,6 +161,7 @@ def compile_terms(terms):
 
 SEVERE_RX, HIGH_RX, MEDIUM_RX, LOW_RX = map(compile_terms, (SEVERE, HIGH, MEDIUM, LOW))
 POSITIVE_RX, NOISE_RX = compile_terms(POSITIVE), compile_terms(NOISE)
+MILESTONE_RX = compile_terms(MILESTONES)
 MECHANISM_RX = [(t, phrase_pattern(t), pts) for t, pts in MECHANISM.items()]
 QB_RX = phrase_pattern("quarterback"), phrase_pattern("qb")
 STAR_RX = phrase_pattern("star")
@@ -193,11 +223,19 @@ def build_player_index():
         for tier, entries in tiers.items():
             for entry in entries:
                 names = [n.strip() for n in entry.split("|") if n.strip()]
+                # "=Hurts" means: match only with exact capitalization, and only
+                # in that league's news (for last names that are also common words).
+                exact = [n[1:] for n in names[1:] if n.startswith("=")]
+                plain = [names[0]] + [n for n in names[1:] if not n.startswith("=")]
                 index.append({
                     "league": league,
                     "tier": tier,
                     "name": names[0],
-                    "patterns": [phrase_pattern(n) for n in names],
+                    "patterns": [phrase_pattern(n) for n in plain],
+                    "exact_patterns": [
+                        re.compile(r"(?<![A-Za-z0-9])" + re.escape(deaccent(n)) + r"(?![A-Za-z0-9])")
+                        for n in exact
+                    ],
                 })
     return index
 
@@ -214,9 +252,14 @@ PLAYERS = build_player_index()
 TEAMS = build_team_index()
 
 
-def find_player(text: str, feed_league: str):
+def find_player(text: str, feed_league: str, raw: str = ""):
     """Best player match: prefer the feed's league, then higher tier."""
-    hits = [p for p in PLAYERS if any(rx.search(text) for rx in p["patterns"])]
+    raw = deaccent(raw)
+    hits = [
+        p for p in PLAYERS
+        if any(rx.search(text) for rx in p["patterns"])
+        or (p["league"] == feed_league and any(rx.search(raw) for rx in p["exact_patterns"]))
+    ]
     if not hits:
         return None
     hits.sort(key=lambda p: (p["league"] != feed_league, p["tier"]))
@@ -309,12 +352,13 @@ def analyze(item: dict):
     text_n = normalize(item["title"] + " " + item["summary"])
 
     severe, high, medium, low = (matches(rx, text_n) for rx in (SEVERE_RX, HIGH_RX, MEDIUM_RX, LOW_RX))
-    if not (severe or high or medium or low):
+    milestones = matches(MILESTONE_RX, NEGATED.sub(" ", title_n))
+    player = find_player(title_n, item["league"], item["title"]) or find_player(text_n, item["league"])
+    if not (severe or high or medium or low or (milestones and player)):
         return None
 
     positive = matches(POSITIVE_RX, NEGATED.sub(" ", title_n))
     noise = matches(NOISE_RX, title_n)
-    player = find_player(title_n, item["league"]) or find_player(text_n, item["league"])
     league = player["league"] if player else item["league"]
 
     # Severity (0-25)
@@ -345,6 +389,7 @@ def analyze(item: dict):
         "is_qb": any(rx.search(title_n) for rx in QB_RX),
         "is_star": bool(STAR_RX.search(title_n)),
         "terms": sorted(set(severe + high)),
+        "milestones": milestones,
         "significance": sig,
         "content": content,
         "noise": bool(noise),
@@ -365,10 +410,20 @@ def momentum_points(n_sources: int) -> int:
     return {0: 0, 1: 10, 2: 18, 3: 24}.get(n_sources, 30)
 
 
+def recent_sources(story) -> int:
+    """Outlets reporting in the last few hours. Older coverage of a long-running
+    storyline doesn't count, so buzz reflects what's happening now."""
+    cutoff = NOW - timedelta(hours=SETTINGS["buzz_window_hours"])
+    seen = story.get("source_seen")
+    if not seen:
+        return len(story["sources"])
+    return sum(1 for t in seen.values() if parse_iso(t) > cutoff)
+
+
 def score_story(story) -> dict:
     parts = {
         "popularity": popularity_points(story),
-        "momentum": momentum_points(len(story["sources"])),
+        "momentum": momentum_points(recent_sources(story)),
         "severity": story["significance"],
         "content": story["content"],
     }
@@ -395,9 +450,11 @@ def load_state():
 
 def save_state(state):
     cutoff = NOW - timedelta(hours=72)
+    storyline_cutoff = NOW - timedelta(days=SETTINGS["storyline_window_days"])
     state["seen"] = {k: v for k, v in state["seen"].items() if parse_iso(v) > cutoff}
     state["stories"] = {
-        k: v for k, v in state["stories"].items() if parse_iso(v["last_seen"]) > cutoff
+        k: v for k, v in state["stories"].items()
+        if parse_iso(v["last_seen"]) > (storyline_cutoff if v.get("player") else cutoff)
     }
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = STATE_FILE.with_suffix(".tmp")
@@ -407,13 +464,17 @@ def save_state(state):
 
 def find_story(state, item_tokens, info):
     window = timedelta(hours=SETTINGS["story_merge_window_hours"])
+    storyline_window = timedelta(days=SETTINGS["storyline_window_days"])
     best, best_sim = None, 0.0
     for sid, s in state["stories"].items():
-        if NOW - parse_iso(s["last_seen"]) > window:
-            continue
+        age = NOW - parse_iso(s["last_seen"])
         if info["player"] and s.get("player"):
-            if info["player"] == s["player"]:
+            # Named star: everything about them within the storyline window is
+            # one ongoing storyline (blood clot -> pulmonary embolism -> return).
+            if info["player"] == s["player"] and age <= storyline_window:
                 return sid
+            continue
+        if age > window:
             continue
         if s["league"] != info["league"]:
             continue
@@ -436,6 +497,7 @@ def merge_item(state, item, info):
             "significance": 0, "content": 0, "noise": info["noise"],
             "sources": [], "links": [], "first_seen": iso(NOW), "last_seen": iso(NOW),
             "alerted": False, "alerted_score": 0, "alerted_terms": [], "updates_sent": 0,
+            "milestones": [], "latest_headline": item["title"], "last_alert": None,
         }
     s = state["stories"][sid]
     s["last_seen"] = iso(NOW)
@@ -444,14 +506,19 @@ def merge_item(state, item, info):
     s["is_star"] = s["is_star"] or info["is_star"]
     s["noise"] = s["noise"] and info["noise"]  # one real report clears the noise flag
     s["terms"] = sorted(set(s["terms"]) | set(info["terms"]))
+    s["milestones"] = sorted(set(s.get("milestones", [])) | set(info["milestones"]))
+    s["latest_headline"] = item["title"]
     if info["significance"] >= s["significance"]:
         s["significance"] = info["significance"]
         s["headline"] = item["title"]  # newest headline with the most serious wording
     s["content"] = max(s["content"], info["content"])
     if item["source"] not in s["sources"]:
         s["sources"].append(item["source"])
-        if len(s["links"]) < 5:
-            s["links"].append({"source": item["source"], "url": item["link"]})
+    s.setdefault("source_seen", {})[item["source"]] = iso(NOW)
+    # Keep the 5 most recent links, newest first, so updates link to the new news.
+    s["links"] = [{"source": item["source"], "url": item["link"]}] + [
+        l for l in s["links"] if l["source"] != item["source"]
+    ][:4]
     s["tokens"] = sorted(set(s["tokens"]) | item_tokens)[:60]
     return sid
 
@@ -463,11 +530,25 @@ def merge_item(state, item, info):
 LEAGUE_LABEL = {"nfl": "NFL", "nba": "NBA", "mlb": "MLB", "nhl": "NHL", "soccer": "Soccer"}
 
 
-def recommendation(total: int) -> str:
+IN_GAME = {
+    "carted off", "carted", "stretcher", "stretchered", "left the game", "leaves game",
+    "leaves the game", "left game", "exits game", "exits", "exited", "locker room",
+    "helped off", "limped off", "limps off", "went down", "goes down", "down on the field",
+    "down on the court", "won't return", "will not return", "left practice",
+    "leaves practice", "exits practice", "collapsed on",
+}
+
+
+def recommendation(s, total: int, kind: str) -> str:
+    on_video = bool(IN_GAME & set(s["terms"]))
+    if kind == "UPDATE":
+        return "📌 Storyline update. Possible follow-up video on what this changes for recovery."
     if total >= SETTINGS["high_priority_threshold"]:
-        return "🎬 Strong TikTok candidate. Find the replay and film early."
+        return ("🎬 Strong TikTok candidate. Find the replay and film early." if on_video
+                else "🎬 Strong TikTok candidate. Big medical/status news; explain what it means.")
     if total >= SETTINGS["alert_threshold"]:
-        return "👀 Worth a look. Check the replay before committing."
+        return ("👀 Worth a look. Check the replay before committing." if on_video
+                else "👀 Worth a look. Read the report before committing.")
     return "Low priority."
 
 
@@ -486,15 +567,22 @@ def format_alert(s, parts, kind: str, new_terms=None) -> str:
 
     who = s["player"] or "Unidentified player"
     line2 = " · ".join(x for x in (who, s.get("team"), LEAGUE_LABEL.get(s["league"], s["league"].upper())) if x)
-    lines = [header, f"<b>{e(line2)}</b>", f"<i>{e(s['headline'])}</i>", ""]
+    headline = s.get("latest_headline", s["headline"]) if kind == "UPDATE" else s["headline"]
+    lines = [header, f"<b>{e(line2)}</b>", f"<i>{e(headline)}</i>", ""]
+    first = parse_iso(s["first_seen"])
+    if kind == "UPDATE" and NOW - first > timedelta(hours=24):
+        days = (NOW - first).days
+        lines.insert(1, f"<i>Ongoing storyline, first flagged {first.strftime('%b')} {first.day} "
+                        f"({days} day{'s' if days != 1 else ''} ago)</i>")
 
     if new_terms:
         lines.append(f"New info: {e(', '.join(drop_subphrases(new_terms)))}")
     if s["terms"]:
         lines.append(f"Signals: {e(', '.join(drop_subphrases(s['terms'])[:6]))}")
-    n = len(s["sources"])
-    lines.append(f"Reported by {n} outlet{'s' if n != 1 else ''}")
-    lines.append(recommendation(total))
+    n = recent_sources(s)
+    lines.append(f"{n} outlet{'s' if n != 1 else ''} reporting in the last "
+                 f"{SETTINGS['buzz_window_hours']}h")
+    lines.append(recommendation(s, total, kind))
     lines.append(
         f"<code>pop {parts['popularity']} · buzz {parts['momentum']} · "
         f"severity {parts['severity']} · content {parts['content']}</code>"
@@ -562,7 +650,8 @@ def run(dry_run: bool):
         for sid in touched:
             s = state["stories"][sid]
             parts = score_story(s)
-            s.update(alerted=True, alerted_score=parts["total"], alerted_terms=s["terms"])
+            s.update(alerted=True, alerted_score=parts["total"], last_alert=iso(NOW),
+                     alerted_terms=sorted(set(s["terms"]) | set(s.get("milestones", []))))
         save_state(state)
         msg = (
             "✅ <b>Injury monitor is live.</b>\n"
@@ -583,11 +672,20 @@ def run(dry_run: bool):
         if not s["alerted"]:
             if parts["total"] >= threshold:
                 alerts.append((sid, parts, "NEW", None))
-        elif s["updates_sent"] < SETTINGS["max_updates_per_story"]:
-            new_terms = [t for t in s["terms"] if t not in s["alerted_terms"] and t in SEVERE]
+        elif s["updates_sent"] < SETTINGS["max_updates_per_story"] and parts["total"] >= threshold:
+            already = set(s["alerted_terms"])
+            new_all = [t for t in s["terms"] + s.get("milestones", [])
+                       if not any(t in a or a in t for a in already)]
+            new_severe = [t for t in new_all if t in SEVERE]
             became_high = s["alerted_score"] < high <= parts["total"]
-            if parts["total"] >= threshold and (became_high or new_terms):
-                alerts.append((sid, parts, "UPDATE", new_terms))
+            last = s.get("last_alert")
+            cooled = last is None or NOW - parse_iso(last) >= timedelta(
+                minutes=SETTINGS["update_cooldown_minutes"])
+            # Serious new detail or a jump to high priority: send right away.
+            # Other new detail (left game, won't return, MRI, cleared, activated):
+            # send if we haven't messaged about this story in the last little while.
+            if new_severe or became_high or (new_all and cooled):
+                alerts.append((sid, parts, "UPDATE", new_all))
 
     alerts.sort(key=lambda a: -a[1]["total"])
     for sid, parts, kind, new_terms in alerts:
@@ -595,7 +693,8 @@ def run(dry_run: bool):
         if send_telegram(format_alert(s, parts, kind, new_terms), dry_run):
             if kind == "UPDATE":
                 s["updates_sent"] += 1
-            s.update(alerted=True, alerted_score=parts["total"], alerted_terms=s["terms"])
+            s.update(alerted=True, alerted_score=parts["total"], last_alert=iso(NOW),
+                     alerted_terms=sorted(set(s["terms"]) | set(s.get("milestones", []))))
         # If sending failed, the story stays un-alerted and is retried next run.
 
     print(f"Sent {len(alerts)} alert(s)")

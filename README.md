@@ -17,7 +17,17 @@ Automated sports injury monitoring for **The Injury Analyst**. Every 5 minutes, 
 - **Severity**: worst wording seen. *Torn, carted off, fracture, season-ending* = 25. *Won't return, locker room, MRI, concussion* = 18. General injury mentions = 12. Routine status = 5. Good news like *cleared* or *no structural damage* is capped at 8.
 - **Content potential**: severity plus visible-mechanism words such as *non-contact, awkward, landed, video, replay*.
 
-**No duplicate spam.** Five outlets reporting the same injury become one story. You get **one alert**, plus at most **3 updates** if the story jumps into high priority or a new serious detail appears (for example "torn ACL confirmed").
+**No duplicate spam.** Five outlets reporting the same injury become one story. You get **one alert**, then **🔁 UPDATE** messages only when something genuinely new is reported.
+
+**Storylines.** Everything about a listed star is tracked as one ongoing storyline for 30 days. Example: *Hurts held out with blood clot* (alert) → routine "still monitoring" articles (silent) → *clots progressed to pulmonary embolism* a week later (update, labeled with when the storyline started) → *cleared to return* (update). Updates fire on:
+- a new serious detail (torn, surgery, fracture, embolism, season-ending…): immediately
+- the story jumping to high priority because many outlets are suddenly covering it: immediately
+- other new details (left the game, won't return, MRI, diagnosed, setback, cleared, activated…): at most one per 30 minutes per story
+- maximum 8 updates per storyline
+
+**What's covered:** in-game injuries, practice injuries, players held out before games, and medical/illness news (blood clots, cardiac, hospitalizations), not just orthopedic injuries. Routine rest days and "load management" are scored low.
+
+**Buzz is measured over the last 6 hours**, so an old storyline only scores high again when coverage spikes again.
 
 Fantasy, betting, and generic "injury report" roundups are ignored unless they name a star. Headlines older than 3 hours are ignored.
 

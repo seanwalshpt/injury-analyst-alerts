@@ -1,5 +1,5 @@
 {
-  "_how_to_edit": "Players are grouped by league and popularity tier (tier1 = biggest names, scored highest). Each entry is 'Full Name' or 'Full Name|Alias|Alias'. Aliases are other ways headlines refer to the player, usually a last name. Only add a last name as an alias if it is distinctive (e.g. 'Mahomes' yes, 'Allen' no). Accents are ignored, so 'Jokic' matches 'Jokić'. Rosters change; edit freely.",
+  "_how_to_edit": "Players are grouped by league and popularity tier (tier1 = biggest names, scored highest). Each entry is 'Full Name' or 'Full Name|Alias|Alias'. Aliases are other ways headlines refer to the player, usually a last name. Only add a last name as an alias if it is distinctive (e.g. 'Mahomes' yes, 'Allen' no). If a last name is also an ordinary word, put = in front of it (e.g. '=Hurts'): it then only matches when capitalized, in that league's news. Accents are ignored, so 'Jokic' matches 'Jokić'. Rosters change; edit freely.",
 
   "nfl": {
     "tier1": [
@@ -7,7 +7,7 @@
       "Josh Allen",
       "Lamar Jackson",
       "Joe Burrow|Burrow",
-      "Jalen Hurts",
+      "Jalen Hurts|=Hurts",
       "Travis Kelce|Kelce",
       "Christian McCaffrey|McCaffrey",
       "Saquon Barkley|Saquon",
