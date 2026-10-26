@@ -12,17 +12,18 @@ Automated sports injury monitoring for **The Injury Analyst**. GitHub runs `moni
 
 **Score = popularity (30) + buzz (30) + severity (25) + content potential (15)**, then multiplied by a league weight (NFL/NBA 1.0, MLB 0.85, NHL/soccer 0.8).
 
-- **Popularity**: is the player on the star list in `config/players.json`? Tier 1 = 30, tier 2 = 22, tier 3 = 15. Unlisted NFL quarterbacks get 14, anyone else 6.
+- **Popularity**: is the player on the star list in `config/players.json`? Tier 1 = 30, tier 2 = 25, tier 3 = 20. Any other player on a current NFL/NBA/MLB/NHL roster is recognized automatically from ESPN rosters (refreshed daily) and gets 10. Unrecognized names: NFL quarterbacks 14, anyone else 6.
 - **Buzz**: how many different outlets are reporting it (1 = 10, 2 = 18, 3 = 24, 4+ = 30). This is a free stand-in for X/Twitter engagement.
 - **Severity**: worst wording seen. *Torn, carted off, fracture, season-ending* = 25. *Won't return, locker room, MRI, concussion* = 18. General injury mentions = 12. Routine status = 5. Good news like *cleared* or *no structural damage* is capped at 8.
 - **Content potential**: severity plus visible-mechanism words such as *non-contact, awkward, landed, video, replay*.
 
 **No duplicate spam.** Five outlets reporting the same injury become one story. You get **one alert**, then **🔁 UPDATE** messages only when something genuinely new is reported.
 
-**Storylines.** Everything about a listed star is tracked as one ongoing storyline for 30 days. Example: *Hurts held out with blood clot* (alert) → routine "still monitoring" articles (silent) → *clots progressed to pulmonary embolism* a week later (update, labeled with when the storyline started) → *cleared to return* (update). Updates fire on:
+**Storylines.** Everything about a recognized player (star list or current roster) is tracked as one ongoing storyline for 30 days. Example: *Hurts held out with blood clot* (alert) → routine "still monitoring" articles (silent) → *clots progressed to pulmonary embolism* a week later (update, labeled with when the storyline started) → *cleared to return* (update). Updates fire on:
 - a new serious detail (torn, surgery, fracture, embolism, season-ending…): immediately
 - the story jumping to high priority because many outlets are suddenly covering it: immediately
-- other new details (left the game, won't return, MRI, diagnosed, setback, cleared, activated…): at most one per 30 minutes per story
+- other new details (left the game, won't return, MRI, diagnosed, setback, cleared, activated, and diagnosis results like *bone bruise, sprain, grade 2, no structural damage, re-evaluated in two weeks*): at most one per 30 minutes per story
+- once you've been alerted about a story, its updates come through even after the initial buzz dies down
 - maximum 8 updates per storyline
 
 **What's covered:** in-game injuries, practice injuries, players held out before games, and medical/illness news (blood clots, cardiac, hospitalizations), not just orthopedic injuries. Routine rest days and "load management" are scored low.

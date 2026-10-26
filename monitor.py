@@ -91,6 +91,13 @@ MILESTONES = [
     "cleared", "activated", "reinstated", "returns to practice", "back at practice",
     "set to return", "expected to return", "will return", "will play", "will start",
     "designated to return", "21-day window", "back in lineup", "back in the lineup",
+    # Diagnosis / imaging results after an exit (good or bad, it's new info)
+    "bone bruise", "sprain", "sprained", "high ankle sprain", "strain", "strained",
+    "grade 1", "grade 2", "grade 3", "mri results", "mri revealed", "mri reveals",
+    "mri showed", "mri shows", "mri confirms", "mri confirmed", "imaging", "contusion",
+    "hyperextended", "hyperextension", "subluxation", "no structural damage",
+    "avoids serious injury", "avoided serious injury", "dodges serious injury",
+    "re-evaluated", "week-to-week", "day-to-day", "expected to miss", "timeline",
 ]
 MEDIUM = [  # 12 pts: injury mentioned, severity unclear
     "questionable to return", "doubtful to return", "being evaluated", "evaluated",
@@ -213,7 +220,7 @@ def load_json(path: Path):
 
 
 SETTINGS = load_json(CONFIG_DIR / "settings.json")
-TIER_POINTS = {"tier1": 30, "tier2": 22, "tier3": 15}
+TIER_POINTS = {"tier1": 30, "tier2": 25, "tier3": 20, "roster": 10}
 
 
 def build_player_index():
@@ -264,9 +271,116 @@ def find_player(text: str, feed_league: str, raw: str = ""):
         or (p["league"] == feed_league and any(rx.search(raw) for rx in p["exact_patterns"]))
     ]
     if not hits:
-        return None
+        return find_rostered(text, feed_league)
     hits.sort(key=lambda p: (p["league"] != feed_league, p["tier"]))
     return hits[0]
+
+
+# ---------------------------------------------------------------------------
+# Rosters: recognize every current player, not just the hand-picked list.
+# Pulled from ESPN's public team rosters, refreshed daily, one league per run.
+# ---------------------------------------------------------------------------
+
+ROSTER_FILE = ROOT / "state" / "rosters.json"
+ROSTER_SPORTS = {"nfl": "football/nfl", "nba": "basketball/nba", "mlb": "baseball/mlb", "nhl": "hockey/nhl"}
+NAME_TOKEN = re.compile(r"[a-z0-9][a-z0-9.'-]*")
+ROSTERS = {"updated": {}, "players": {}}
+
+
+def name_tokens(text: str) -> list[str]:
+    out = []
+    for t in NAME_TOKEN.findall(normalize(text)):
+        t = re.sub(r"(?:'s|')$", "", t).rstrip(".-")  # Suggs' / Suggs's -> suggs
+        if t:
+            out.append(t)
+    return out
+
+
+def _walk(obj, key):
+    """Yield every dict inside obj that has `key`."""
+    if isinstance(obj, dict):
+        if key in obj:
+            yield obj
+        for v in obj.values():
+            yield from _walk(v, key)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _walk(v, key)
+
+
+def load_rosters():
+    global ROSTERS
+    if ROSTER_FILE.exists():
+        try:
+            ROSTERS = load_json(ROSTER_FILE)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+
+def refresh_rosters(budget_seconds: int = 30):
+    """Refresh the stalest league's rosters if it's over a day old."""
+    epoch = "2000-01-01T00:00:00+00:00"
+    attempted = ROSTERS.setdefault("attempted", {})
+    stale = [
+        lg for lg in ROSTER_SPORTS
+        if NOW - parse_iso(ROSTERS["updated"].get(lg, epoch)) > timedelta(hours=24)
+        and NOW - parse_iso(attempted.get(lg, epoch)) > timedelta(minutes=30)
+    ]
+    if not stale:
+        return
+    # Least recently attempted first, so one failing league can't block the rest.
+    league = min(stale, key=lambda lg: attempted.get(lg, epoch))
+    attempted[league] = iso(NOW)
+    save_rosters()
+    base = f"https://site.api.espn.com/apis/site/v2/sports/{ROSTER_SPORTS[league]}"
+    started = time.monotonic()
+    try:
+        r = requests.get(f"{base}/teams", headers=HTTP_HEADERS, timeout=10)
+        r.raise_for_status()
+        teams = {t["id"]: t.get("name") or t.get("displayName") for t in _walk(r.json(), "id")
+                 if "abbreviation" in t and "location" in t}
+    except (requests.RequestException, ValueError, KeyError) as e:
+        print(f"  ! roster refresh failed ({league}): {type(e).__name__}")
+        return
+    players = {}
+    for team_id, team_name in teams.items():
+        if time.monotonic() - started > budget_seconds:
+            print(f"  ! roster refresh for {league.upper()} ran out of time; will retry next run")
+            return
+        try:
+            r = requests.get(f"{base}/teams/{team_id}/roster", headers=HTTP_HEADERS, timeout=8)
+            r.raise_for_status()
+        except requests.RequestException:
+            continue
+        for athlete in _walk(r.json(), "fullName"):
+            key = " ".join(name_tokens(athlete["fullName"]))
+            if len(key.split()) >= 2:
+                players[key] = {"name": athlete["fullName"], "team": team_name}
+    if len(players) < 100:  # something went wrong; keep the old list
+        print(f"  ! roster refresh for {league.upper()} looked incomplete ({len(players)} players)")
+        return
+    ROSTERS["players"][league] = players
+    ROSTERS["updated"][league] = iso(NOW)
+    save_rosters()
+    print(f"Rosters refreshed: {league.upper()} ({len(players)} players)")
+
+
+def save_rosters():
+    ROSTER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ROSTER_FILE.write_text(json.dumps(ROSTERS), encoding="utf-8")
+
+
+def find_rostered(text: str, feed_league: str):
+    toks = name_tokens(text)
+    grams = {" ".join(toks[i:i + n]) for n in (2, 3, 4) for i in range(len(toks) - n + 1)}
+    order = [feed_league] + [lg for lg in ROSTERS["players"] if lg != feed_league]
+    for league in order:
+        roster = ROSTERS["players"].get(league, {})
+        for g in grams:
+            if g in roster:
+                p = roster[g]
+                return {"league": league, "tier": "roster", "name": p["name"], "team": p["team"]}
+    return None
 
 
 def find_team(text: str, league: str):
@@ -458,7 +572,7 @@ def analyze(item: dict):
         "player": player["name"] if player else None,
         "tier": player["tier"] if player else None,
         "league": league,
-        "team": find_team(title_n, league),
+        "team": find_team(title_n, league) or (player or {}).get("team"),
         "is_qb": any(rx.search(title_n) for rx in QB_RX),
         "is_star": bool(STAR_RX.search(title_n)),
         "terms": sorted(set(severe + high)),
@@ -730,7 +844,10 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
         if not s["alerted"]:
             if parts["total"] >= threshold:
                 alerts.append((sid, parts, "NEW", None))
-        elif s["updates_sent"] < SETTINGS["max_updates_per_story"] and parts["total"] >= threshold:
+        elif s["updates_sent"] < SETTINGS["max_updates_per_story"] and (
+                s.get("notified") or parts["total"] >= threshold):
+            # Once you've been alerted about a story, every real development
+            # gets an update, even after the initial buzz has died down.
             already = set(s["alerted_terms"])
             new_all = [t for t in s["terms"] + s.get("milestones", [])
                        if not any(t in a or a in t for a in already)]
@@ -752,7 +869,7 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
         if send_telegram(format_alert(s, parts, kind, new_terms, playing), dry_run):
             if kind == "UPDATE":
                 s["updates_sent"] += 1
-            s.update(alerted=True, alerted_score=parts["total"], last_alert=iso(NOW),
+            s.update(alerted=True, notified=True, alerted_score=parts["total"], last_alert=iso(NOW),
                      alerted_terms=sorted(set(s["terms"]) | set(s.get("milestones", []))))
         # If sending failed, the story stays un-alerted and is retried next run.
     print(f"Sent {len(alerts)} alert(s)")
@@ -766,6 +883,7 @@ def tick():
 
 def run(dry_run: bool):
     state, fresh_start = load_state()
+    load_rosters()
     live = detect_live_games()
     live_teams = {lg: info["teams"] for lg, info in live.items()}
     if live:
@@ -780,6 +898,8 @@ def run(dry_run: bool):
             and NOW - parse_iso(last) < timedelta(minutes=quiet["sweep_every_minutes"] - 1)):
         print(f"Quiet hours ({hour_et}:00 ET), last sweep {last}; skipping this run.")
         return
+
+    refresh_rosters()
 
     # 1) Full sweep of every search and feed.
     touched = process_items(state, fetch_all())
