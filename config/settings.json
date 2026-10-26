@@ -8,6 +8,7 @@
   "story_merge_window_hours": 36,
   "storyline_window_days": 30,
   "buzz_window_hours": 6,
+  "storyline_heat_hours": 72,
   "update_cooldown_minutes": 30,
   "max_updates_per_story": 8,
 

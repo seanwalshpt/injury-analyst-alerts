@@ -264,16 +264,22 @@ TEAMS = build_team_index()
 
 def find_player(text: str, feed_league: str, raw: str = ""):
     """Best player match: prefer the feed's league, then higher tier."""
+    found = find_players(text, feed_league, raw)
+    return found[0] if found else None
+
+
+def find_players(text: str, feed_league: str, raw: str = ""):
+    """Every recognized player in the text, best match first."""
     raw = deaccent(raw)
     hits = [
         p for p in PLAYERS
         if any(rx.search(text) for rx in p["patterns"])
         or (p["league"] == feed_league and any(rx.search(raw) for rx in p["exact_patterns"]))
     ]
-    if not hits:
-        return find_rostered(text, feed_league)
     hits.sort(key=lambda p: (p["league"] != feed_league, p["tier"]))
-    return hits[0]
+    names = {p["name"] for p in hits}
+    hits += [p for p in find_rostered(text, feed_league) if p["name"] not in names]
+    return hits
 
 
 # ---------------------------------------------------------------------------
@@ -374,13 +380,27 @@ def find_rostered(text: str, feed_league: str):
     toks = name_tokens(text)
     grams = {" ".join(toks[i:i + n]) for n in (2, 3, 4) for i in range(len(toks) - n + 1)}
     order = [feed_league] + [lg for lg in ROSTERS["players"] if lg != feed_league]
+    found = []
     for league in order:
         roster = ROSTERS["players"].get(league, {})
-        for g in grams:
+        for g in sorted(grams, key=lambda g: toks_index(toks, g)):
             if g in roster:
                 p = roster[g]
-                return {"league": league, "tier": "roster", "name": p["name"], "team": p["team"]}
-    return None
+                found.append({"league": league, "tier": "roster", "name": p["name"], "team": p["team"]})
+    return found
+
+
+def roster_team(name: str, league: str):
+    """Current team from ESPN rosters (more reliable than guessing from a
+    headline that may mention two teams)."""
+    p = ROSTERS["players"].get(league, {}).get(" ".join(name_tokens(name)))
+    return p["team"] if p else None
+
+
+def toks_index(toks, gram):
+    """Position of a name in the headline, so the first-named player wins."""
+    first = gram.split()[0]
+    return toks.index(first) if first in toks else len(toks)
 
 
 def find_team(text: str, league: str):
@@ -540,7 +560,9 @@ def analyze(item: dict):
 
     severe, high, medium, low = (matches(rx, text_n) for rx in (SEVERE_RX, HIGH_RX, MEDIUM_RX, LOW_RX))
     milestones = matches(MILESTONE_RX, NEGATED.sub(" ", title_n))
-    player = find_player(title_n, item["league"], item["title"]) or find_player(text_n, item["league"])
+    player = pick_injured_player(
+        find_players(title_n, item["league"], item["title"]), title_n
+    ) or find_player(text_n, item["league"])
     if not (severe or high or medium or low or (milestones and player)):
         return None
 
@@ -572,7 +594,8 @@ def analyze(item: dict):
         "player": player["name"] if player else None,
         "tier": player["tier"] if player else None,
         "league": league,
-        "team": find_team(title_n, league) or (player or {}).get("team"),
+        "team": (roster_team(player["name"], league) if player else None)
+                or (player or {}).get("team") or find_team(title_n, league),
         "is_qb": any(rx.search(title_n) for rx in QB_RX),
         "is_star": bool(STAR_RX.search(title_n)),
         "terms": sorted(set(severe + high)),
@@ -581,6 +604,30 @@ def analyze(item: dict):
         "content": content,
         "noise": bool(noise),
     }
+
+
+def pick_injured_player(players, title_n: str):
+    """With several players in one headline ("LeBron scores 40 as Suggs exits
+    with knee injury"), pick the one named closest to the injury wording."""
+    if len(players) <= 1:
+        return players[0] if players else None
+    term_pos = [m.start() for rx_list in (SEVERE_RX, HIGH_RX, MEDIUM_RX)
+                for _, rx in rx_list for m in rx.finditer(title_n)]
+    if not term_pos:
+        return players[0]
+
+    def name_pos(p):
+        full = normalize(p["name"])
+        i = title_n.find(full)
+        if i < 0:
+            i = title_n.find(full.split()[-1])
+        return i
+
+    def distance(p):
+        i = name_pos(p)
+        return min(abs(i - t) for t in term_pos) if i >= 0 else 10**6
+
+    return min(players, key=distance)  # stable: ties keep tier order
 
 
 def popularity_points(story) -> int:
@@ -607,14 +654,37 @@ def recent_sources(story) -> int:
     return sum(1 for t in seen.values() if parse_iso(t) > cutoff)
 
 
+def record_buzz(story):
+    """Remember the most attention a story has had, and when."""
+    pts = momentum_points(recent_sources(story))
+    if pts >= story.get("peak_buzz", 0):
+        story["peak_buzz"] = pts
+        story["peak_at"] = iso(NOW)
+
+
+def heat_points(story) -> int:
+    """A story that was heavily covered recently stays 'warm': its peak buzz
+    fades linearly to zero over storyline_heat_hours instead of vanishing
+    after a few hours. So a follow-up (e.g. the MRI result the next day) on a
+    story everyone was talking about last night still scores like a big story."""
+    if not story.get("peak_at"):
+        return 0
+    hours = (NOW - parse_iso(story["peak_at"])).total_seconds() / 3600
+    fade = max(0.0, 1 - hours / SETTINGS["storyline_heat_hours"])
+    return int(round(story["peak_buzz"] * fade))
+
+
 def score_story(story) -> dict:
+    current = momentum_points(recent_sources(story))
+    heat = heat_points(story)
     parts = {
         "popularity": popularity_points(story),
-        "momentum": momentum_points(recent_sources(story)),
+        "momentum": max(current, heat),
+        "carried": heat > current,
         "severity": story["significance"],
         "content": story["content"],
     }
-    total = sum(parts.values())
+    total = parts["popularity"] + parts["momentum"] + parts["severity"] + parts["content"]
     total *= SETTINGS["league_multiplier"].get(story["league"], 0.8)
     if story.get("noise"):
         total *= 0.6
@@ -702,6 +772,7 @@ def merge_item(state, item, info):
     if item["source"] not in s["sources"]:
         s["sources"].append(item["source"])
     s.setdefault("source_seen", {})[item["source"]] = iso(NOW)
+    record_buzz(s)
     # Keep the 5 most recent links, newest first, so updates link to the new news.
     s["links"] = [{"source": item["source"], "url": item["link"]}] + [
         l for l in s["links"] if l["source"] != item["source"]
@@ -773,7 +844,8 @@ def format_alert(s, parts, kind: str, new_terms=None, playing: bool = False) -> 
                  f"{SETTINGS['buzz_window_hours']}h")
     lines.append(recommendation(s, total, kind))
     lines.append(
-        f"<code>pop {parts['popularity']} · buzz {parts['momentum']} · "
+        f"<code>pop {parts['popularity']} · buzz {parts['momentum']}"
+        f"{' (carried over)' if parts.get('carried') else ''} · "
         f"severity {parts['severity']} · content {parts['content']}</code>"
     )
     lines.append("")
@@ -828,9 +900,31 @@ def process_items(state, items) -> set:
         if info is None:
             continue
         new_items += 1
-        touched.add(merge_item(state, item, info))
+        sid = merge_item(state, item, info)
+        touched.add(sid)
+        touched |= credit_other_players(state, item, info, sid)
     print(f"{new_items} new injury headlines, {len(touched)} stories touched")
     return touched
+
+
+def credit_other_players(state, item, info, primary_sid) -> set:
+    """A headline like "Jalen Williams, Jalen Suggs injuries..." is coverage of
+    both players. Credit the extra coverage (buzz only, no injury details) to
+    other players who already have an active storyline."""
+    others = {p["name"] for p in find_players(normalize(item["title"]), info["league"], item["title"])}
+    others.discard(info["player"])
+    window = timedelta(days=SETTINGS["storyline_window_days"])
+    credited = set()
+    for sid, s in state["stories"].items():
+        if (sid != primary_sid and s.get("player") in others
+                and NOW - parse_iso(s["last_seen"]) <= window):
+            if item["source"] not in s["sources"]:
+                s["sources"].append(item["source"])
+            s.setdefault("source_seen", {})[item["source"]] = iso(NOW)
+            s["last_seen"] = iso(NOW)
+            record_buzz(s)
+            credited.add(sid)
+    return credited
 
 
 def send_alerts(state, touched, live_teams, dry_run: bool):

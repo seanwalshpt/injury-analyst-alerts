@@ -28,7 +28,7 @@ Automated sports injury monitoring for **The Injury Analyst**. GitHub runs `moni
 
 **What's covered:** in-game injuries, practice injuries, players held out before games, and medical/illness news (blood clots, cardiac, hospitalizations), not just orthopedic injuries. Routine rest days and "load management" are scored low.
 
-**Buzz is measured over the last 6 hours**, so an old storyline only scores high again when coverage spikes again.
+**Buzz is measured over the last 6 hours**, but a story also remembers its peak coverage, which fades gradually over 3 days (`storyline_heat_hours`). So the next-day MRI result on an injury everyone was talking about last night still scores like a big story, shown as "buzz (carried over)" in the alert. Headlines covering several players ("Jalen Williams, Jalen Suggs injuries…") count toward each player's storyline, and when a headline names several players, the injury is credited to the one named closest to the injury wording.
 
 Fantasy, betting, and generic "injury report" roundups are ignored unless they name a star. Headlines older than 3 hours are ignored.
 
