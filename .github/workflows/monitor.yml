@@ -1,0 +1,65 @@
+name: Injury monitor
+
+on:
+  schedule:
+    # Every 5 minutes (GitHub's minimum), offset from :00 because runs at the
+    # top of the hour are the most likely to be delayed. GitHub does not
+    # guarantee exact timing; expect occasional delays during busy periods.
+    - cron: "2-59/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      test_message:
+        description: "Only send a test Telegram message"
+        type: boolean
+        default: false
+
+# Never run two checks at once (they share the same "already seen" memory).
+concurrency:
+  group: injury-monitor
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Scheduled runs only happen once you create the repository variable
+    # MONITOR_ENABLED = true (Settings > Secrets and variables > Actions > Variables).
+    # Manual runs from the Actions tab always work. Skipped runs cost nothing.
+    if: github.event_name == 'workflow_dispatch' || vars.MONITOR_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore memory of already-seen stories
+        if: ${{ !inputs.test_message }}
+        uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: injury-state-${{ github.run_id }}
+          restore-keys: injury-state-
+
+      - name: Check for new injuries
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python monitor.py ${{ inputs.test_message && '--test' || '' }}
+
+      - name: Save memory of seen stories
+        if: ${{ !inputs.test_message && hashFiles('state/state.json') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: injury-state-${{ github.run_id }}

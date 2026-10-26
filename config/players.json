@@ -1,0 +1,206 @@
+{
+  "_how_to_edit": "Players are grouped by league and popularity tier (tier1 = biggest names, scored highest). Each entry is 'Full Name' or 'Full Name|Alias|Alias'. Aliases are other ways headlines refer to the player, usually a last name. Only add a last name as an alias if it is distinctive (e.g. 'Mahomes' yes, 'Allen' no). Accents are ignored, so 'Jokic' matches 'Jokić'. Rosters change; edit freely.",
+
+  "nfl": {
+    "tier1": [
+      "Patrick Mahomes|Mahomes",
+      "Josh Allen",
+      "Lamar Jackson",
+      "Joe Burrow|Burrow",
+      "Jalen Hurts",
+      "Travis Kelce|Kelce",
+      "Christian McCaffrey|McCaffrey",
+      "Saquon Barkley|Saquon",
+      "Justin Jefferson",
+      "Ja'Marr Chase|Ja'Marr",
+      "Aaron Rodgers",
+      "Dak Prescott|Dak",
+      "Micah Parsons",
+      "Jayden Daniels",
+      "Caleb Williams",
+      "C.J. Stroud|CJ Stroud|Stroud"
+    ],
+    "tier2": [
+      "Justin Herbert|Herbert",
+      "Brock Purdy|Purdy",
+      "Jordan Love",
+      "Derrick Henry",
+      "Bijan Robinson|Bijan",
+      "Jahmyr Gibbs",
+      "CeeDee Lamb|CeeDee",
+      "Tyreek Hill",
+      "Puka Nacua|Puka",
+      "Amon-Ra St. Brown|Amon-Ra",
+      "A.J. Brown",
+      "T.J. Watt",
+      "Myles Garrett",
+      "Nick Bosa",
+      "Drake Maye",
+      "Bo Nix",
+      "Trevor Lawrence",
+      "Tua Tagovailoa|Tua",
+      "Matthew Stafford|Stafford",
+      "Jared Goff",
+      "Baker Mayfield|Baker",
+      "Kyler Murray",
+      "Malik Nabers|Nabers",
+      "Brock Bowers",
+      "Ashton Jeanty|Jeanty",
+      "Travis Hunter",
+      "Shedeur Sanders|Shedeur",
+      "Cam Ward",
+      "Jonathan Taylor"
+    ],
+    "tier3": [
+      "Garrett Wilson",
+      "Davante Adams",
+      "Mike Evans",
+      "George Kittle|Kittle",
+      "Sauce Gardner",
+      "Aidan Hutchinson|Hutchinson",
+      "Josh Jacobs",
+      "De'Von Achane|Achane",
+      "Kyren Williams",
+      "Nico Collins",
+      "Drake London",
+      "Marvin Harrison Jr.",
+      "Rome Odunze|Odunze",
+      "J.J. McCarthy",
+      "Bryce Young",
+      "Anthony Richardson"
+    ]
+  },
+
+  "nba": {
+    "tier1": [
+      "LeBron James|LeBron",
+      "Stephen Curry|Steph Curry",
+      "Kevin Durant",
+      "Giannis Antetokounmpo|Giannis",
+      "Nikola Jokic|Jokic",
+      "Luka Doncic|Luka|Doncic",
+      "Shai Gilgeous-Alexander|Gilgeous-Alexander|SGA",
+      "Victor Wembanyama|Wembanyama|Wemby",
+      "Anthony Edwards|Ant Edwards",
+      "Jayson Tatum|Tatum",
+      "Joel Embiid|Embiid",
+      "Ja Morant|Morant",
+      "Cooper Flagg|Flagg"
+    ],
+    "tier2": [
+      "Jalen Brunson|Brunson",
+      "Tyrese Haliburton|Haliburton",
+      "Kawhi Leonard|Kawhi",
+      "Devin Booker",
+      "Donovan Mitchell",
+      "Anthony Davis",
+      "Kyrie Irving|Kyrie",
+      "Zion Williamson|Zion",
+      "Jaylen Brown",
+      "Damian Lillard|Lillard",
+      "Jimmy Butler",
+      "Paolo Banchero|Banchero",
+      "Cade Cunningham",
+      "Trae Young",
+      "LaMelo Ball|LaMelo",
+      "Chet Holmgren|Holmgren"
+    ],
+    "tier3": [
+      "De'Aaron Fox",
+      "Karl-Anthony Towns",
+      "Jalen Williams",
+      "Bam Adebayo|Adebayo",
+      "Evan Mobley|Mobley",
+      "Domantas Sabonis|Sabonis",
+      "Pascal Siakam|Siakam",
+      "Tyrese Maxey|Maxey",
+      "Franz Wagner",
+      "Alperen Sengun|Sengun",
+      "Jamal Murray",
+      "Darius Garland",
+      "Scottie Barnes"
+    ]
+  },
+
+  "mlb": {
+    "tier1": [
+      "Shohei Ohtani|Ohtani",
+      "Aaron Judge",
+      "Juan Soto",
+      "Mookie Betts|Mookie"
+    ],
+    "tier2": [
+      "Bryce Harper",
+      "Mike Trout",
+      "Ronald Acuna Jr.|Ronald Acuna|Acuna",
+      "Paul Skenes|Skenes",
+      "Bobby Witt Jr.",
+      "Fernando Tatis Jr.|Tatis",
+      "Elly De La Cruz",
+      "Freddie Freeman",
+      "Vladimir Guerrero Jr.|Vlad Guerrero"
+    ],
+    "tier3": [
+      "Gerrit Cole",
+      "Cal Raleigh",
+      "Gunnar Henderson",
+      "Julio Rodriguez",
+      "Corbin Carroll",
+      "Yoshinobu Yamamoto|Yamamoto",
+      "Tarik Skubal|Skubal",
+      "Pete Alonso"
+    ]
+  },
+
+  "nhl": {
+    "tier1": [
+      "Connor McDavid|McDavid",
+      "Sidney Crosby|Crosby"
+    ],
+    "tier2": [
+      "Auston Matthews",
+      "Nathan MacKinnon|MacKinnon",
+      "Leon Draisaitl|Draisaitl",
+      "Alex Ovechkin|Ovechkin",
+      "Connor Bedard|Bedard",
+      "Macklin Celebrini|Celebrini"
+    ],
+    "tier3": [
+      "Cale Makar|Makar",
+      "Nikita Kucherov|Kucherov",
+      "David Pastrnak|Pastrnak",
+      "Jack Hughes",
+      "Matthew Tkachuk",
+      "Brady Tkachuk",
+      "Kirill Kaprizov|Kaprizov",
+      "Igor Shesterkin|Shesterkin"
+    ]
+  },
+
+  "soccer": {
+    "tier1": [
+      "Lionel Messi|Messi",
+      "Cristiano Ronaldo",
+      "Erling Haaland|Haaland",
+      "Kylian Mbappe|Mbappe"
+    ],
+    "tier2": [
+      "Mohamed Salah",
+      "Vinicius Junior|Vinicius Jr|Vinicius",
+      "Jude Bellingham|Bellingham",
+      "Lamine Yamal|Yamal",
+      "Harry Kane",
+      "Christian Pulisic|Pulisic"
+    ],
+    "tier3": [
+      "Bukayo Saka|Saka",
+      "Cole Palmer",
+      "Kevin De Bruyne|De Bruyne",
+      "Martin Odegaard|Odegaard",
+      "Declan Rice",
+      "Rodri",
+      "Pedri",
+      "Florian Wirtz|Wirtz"
+    ]
+  }
+}

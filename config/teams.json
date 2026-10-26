@@ -1,0 +1,13 @@
+{
+  "_how_to_edit": "Team names used to label which team an injury story is about. Matching is by whole word, case-insensitive. Each league is only checked against stories from that league's feeds.",
+
+  "nfl": ["Cardinals", "Falcons", "Ravens", "Bills", "Panthers", "Bears", "Bengals", "Browns", "Cowboys", "Broncos", "Lions", "Packers", "Texans", "Colts", "Jaguars", "Chiefs", "Raiders", "Chargers", "Rams", "Dolphins", "Vikings", "Patriots", "Saints", "Giants", "Jets", "Eagles", "Steelers", "49ers", "Seahawks", "Buccaneers", "Titans", "Commanders"],
+
+  "nba": ["Hawks", "Celtics", "Nets", "Hornets", "Bulls", "Cavaliers", "Mavericks", "Nuggets", "Pistons", "Warriors", "Rockets", "Pacers", "Clippers", "Lakers", "Grizzlies", "Heat", "Bucks", "Timberwolves", "Pelicans", "Knicks", "Thunder", "Magic", "76ers", "Sixers", "Suns", "Trail Blazers", "Blazers", "Kings", "Spurs", "Raptors", "Jazz", "Wizards"],
+
+  "mlb": ["Diamondbacks", "Braves", "Orioles", "Red Sox", "Cubs", "White Sox", "Reds", "Guardians", "Rockies", "Tigers", "Astros", "Royals", "Angels", "Dodgers", "Marlins", "Brewers", "Twins", "Mets", "Yankees", "Athletics", "Phillies", "Pirates", "Padres", "Giants", "Mariners", "Cardinals", "Rays", "Rangers", "Blue Jays", "Nationals"],
+
+  "nhl": ["Ducks", "Bruins", "Sabres", "Flames", "Hurricanes", "Blackhawks", "Avalanche", "Blue Jackets", "Stars", "Red Wings", "Oilers", "Panthers", "Kings", "Wild", "Canadiens", "Predators", "Devils", "Islanders", "Rangers", "Senators", "Flyers", "Penguins", "Sharks", "Kraken", "Blues", "Lightning", "Maple Leafs", "Mammoth", "Canucks", "Golden Knights", "Capitals", "Jets"],
+
+  "soccer": ["Arsenal", "Chelsea", "Liverpool", "Manchester City", "Man City", "Manchester United", "Man United", "Man Utd", "Tottenham", "Spurs", "Newcastle", "Aston Villa", "Real Madrid", "Barcelona", "Atletico Madrid", "Bayern Munich", "Bayern", "Borussia Dortmund", "Dortmund", "PSG", "Paris Saint-Germain", "Inter Milan", "AC Milan", "Juventus", "Napoli", "Inter Miami", "LA Galaxy", "Al Nassr", "USMNT"]
+}

@@ -1,0 +1,57 @@
+{
+  "_how_to_edit": "Tuning knobs for the monitor. Safe to change numbers here without touching the Python code.",
+
+  "alert_threshold": 60,
+  "high_priority_threshold": 80,
+
+  "max_story_age_hours": 3,
+  "story_merge_window_hours": 36,
+  "max_updates_per_story": 3,
+
+  "league_multiplier": {
+    "nfl": 1.0,
+    "nba": 1.0,
+    "mlb": 0.85,
+    "nhl": 0.8,
+    "soccer": 0.8
+  },
+
+  "google_news_queries": {
+    "nfl": [
+      "NFL injury",
+      "NFL \"carted off\"",
+      "NFL \"ruled out\"",
+      "NFL \"won't return\" OR \"will not return\"",
+      "NFL MRI",
+      "NFL torn",
+      "quarterback injury"
+    ],
+    "nba": [
+      "NBA injury",
+      "NBA \"ruled out\"",
+      "NBA \"won't return\" OR \"will not return\"",
+      "NBA MRI",
+      "NBA torn"
+    ],
+    "mlb": [
+      "MLB injury",
+      "MLB \"injured list\""
+    ],
+    "nhl": [
+      "NHL injury"
+    ],
+    "soccer": [
+      "\"Premier League\" injury",
+      "\"Champions League\" injury",
+      "MLS injury"
+    ]
+  },
+
+  "extra_rss_feeds": {
+    "nfl": ["https://www.espn.com/espn/rss/nfl/news"],
+    "nba": ["https://www.espn.com/espn/rss/nba/news"],
+    "mlb": ["https://www.espn.com/espn/rss/mlb/news"],
+    "nhl": ["https://www.espn.com/espn/rss/nhl/news"],
+    "soccer": ["https://www.espn.com/espn/rss/soccer/news"]
+  }
+}
