@@ -28,7 +28,7 @@ jobs:
     # Manual runs from the Actions tab always work. Skipped runs cost nothing.
     if: github.event_name == 'workflow_dispatch' || vars.MONITOR_ENABLED == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 8
 
     steps:
       - name: Get the code
@@ -58,7 +58,9 @@ jobs:
         run: python monitor.py ${{ inputs.test_message && '--test' || '' }}
 
       - name: Save memory of seen stories
-        if: ${{ !inputs.test_message && hashFiles('state/state.json') != '' }}
+        # always(): keep the memory even if the check step errored, so alerts that
+        # were already sent aren't sent again next run.
+        if: ${{ always() && !inputs.test_message && hashFiles('state/state.json') != '' }}
         uses: actions/cache/save@v4
         with:
           path: state

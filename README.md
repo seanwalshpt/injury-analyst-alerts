@@ -1,6 +1,6 @@
 # Injury Analyst Alerts
 
-Automated sports injury monitoring for **The Injury Analyst**. Every 5 minutes, GitHub runs `monitor.py` in the cloud. It reads Google News and ESPN injury headlines, groups reports about the same injury, scores each injury 0–100, and sends a Telegram alert to your phone when one is worth a look. Your computer does not need to be on.
+Automated sports injury monitoring for **The Injury Analyst**. GitHub runs `monitor.py` in the cloud every 5 minutes, checking about every minute while games are live. It reads Google News and ESPN injury headlines, groups reports about the same injury, scores each injury 0–100, and sends a Telegram alert to your phone when one is worth a look. Your computer does not need to be on.
 
 ## How alerts work
 
@@ -30,6 +30,18 @@ Automated sports injury monitoring for **The Injury Analyst**. Every 5 minutes, 
 **Buzz is measured over the last 6 hours**, so an old storyline only scores high again when coverage spikes again.
 
 Fantasy, betting, and generic "injury report" roundups are ignored unless they name a star. Headlines older than 3 hours are ignored.
+
+## How often it checks
+
+| When | How often |
+|---|---|
+| A game in that league is **live** (or starts within 90 min, or ended within the last hour) | Full sweep every 5 min **plus** in-game searches for that league about **every 60 seconds** |
+| Normal hours, no games | Full sweep every 5 min |
+| Overnight 2–7 AM ET, no games | Full sweep every 15 min |
+
+"Live" comes from ESPN's public scoreboard, so it automatically follows the real schedule: Sunday/Monday/Thursday NFL, Saturday games late in the season, London and holiday games, nightly NBA, playoffs, and off-seasons. If the scoreboard can't be reached, the monitor falls back to normal 5-minute sweeps. Alerts about a team that's playing right now are tagged 🔴.
+
+GitHub's scheduler can't trigger more often than every 5 minutes. The 60-second checks happen *inside* each run while games are on, which is free on a public repo.
 
 ## Customizing (no coding needed)
 

@@ -26,10 +26,12 @@ import json
 import os
 import re
 import sys
+import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote_plus
+from zoneinfo import ZoneInfo
 
 import feedparser
 import requests
@@ -40,6 +42,7 @@ STATE_FILE = ROOT / "state" / "state.json"
 
 HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (injury-analyst-alerts; +https://github.com)"}
 NOW = datetime.now(timezone.utc)
+EASTERN = ZoneInfo("America/New_York")
 
 # ---------------------------------------------------------------------------
 # Injury vocabulary. Each phrase is matched as whole words, case-insensitive.
@@ -295,7 +298,7 @@ def entry_time(entry) -> datetime | None:
 
 def fetch_feed(url: str, league: str, is_google: bool):
     try:
-        resp = requests.get(url, headers=HTTP_HEADERS, timeout=15)
+        resp = requests.get(url, headers=HTTP_HEADERS, timeout=8)
         resp.raise_for_status()
     except requests.RequestException as e:
         print(f"  ! feed failed ({league}): {url[:90]} -> {e}")
@@ -335,11 +338,81 @@ def fetch_all():
         jobs += [(google_news_url(q), league, True) for q in queries]
     for league, urls in SETTINGS.get("extra_rss_feeds", {}).items():
         jobs += [(u, league, False) for u in urls]
+    return run_jobs(jobs)
+
+
+def fetch_live(leagues):
+    """Smaller, faster set of in-game searches, only for leagues playing now."""
+    lm = SETTINGS["live_mode"]
+    jobs = []
+    for league in leagues:
+        jobs += [(google_news_url(q), league, True) for q in lm["live_queries"].get(league, [])]
+        jobs += [(u, league, False) for u in SETTINGS.get("extra_rss_feeds", {}).get(league, [])]
+    return run_jobs(jobs)
+
+
+def run_jobs(jobs, budget_seconds: int = 100):
+    """Fetch feeds, but stop early if the news sites are being slow, so a run
+    never overlaps the next one or hits the job time limit."""
     items = []
-    for url, league, is_google in jobs:
+    started = time.monotonic()
+    for i, (url, league, is_google) in enumerate(jobs):
+        if time.monotonic() - started > budget_seconds:
+            print(f"  ! time budget reached; skipped {len(jobs) - i} feeds this run")
+            break
         items += fetch_feed(url, league, is_google)
     print(f"Fetched {len(items)} headlines from {len(jobs)} feeds")
     return items
+
+
+# ---------------------------------------------------------------------------
+# Live game detection (ESPN's public scoreboard)
+# ---------------------------------------------------------------------------
+
+def detect_live_games() -> dict:
+    """{league: {"teams": set(team names), "why": str}} for leagues with a game
+    in progress, about to start, or just finished (post-game injury news).
+    If ESPN can't be reached, returns {} and the monitor runs at normal speed."""
+    lm = SETTINGS.get("live_mode", {})
+    if not lm.get("enabled"):
+        return {}
+    live = {}
+    for league, urls in lm["scoreboards"].items():
+        game_len = timedelta(hours=lm["game_hours"].get(league, 3))
+        pre = timedelta(minutes=lm["pregame_minutes"])
+        post = timedelta(minutes=lm["postgame_minutes"])
+        for url in urls:
+            try:
+                resp = requests.get(url, headers=HTTP_HEADERS, timeout=10)
+                resp.raise_for_status()
+                events = resp.json().get("events", [])
+            except (requests.RequestException, ValueError) as e:
+                print(f"  ! scoreboard failed ({league}): {type(e).__name__}")
+                continue
+            for ev in events:
+                state = ((ev.get("status") or {}).get("type") or {}).get("state")
+                try:
+                    start = datetime.fromisoformat(ev["date"].replace("Z", "+00:00"))
+                except (KeyError, ValueError):
+                    continue
+                if state == "in":
+                    why = "in progress"
+                elif state == "pre" and start - pre <= NOW:
+                    why = "starting soon"
+                elif state == "post" and NOW <= start + game_len + post:
+                    why = "just ended"
+                else:
+                    continue
+                entry = live.setdefault(league, {"teams": set(), "why": why})
+                if why == "in progress":
+                    entry["why"] = why
+                for comp in ev.get("competitions", [])[:1]:
+                    for c in comp.get("competitors", []):
+                        team = c.get("team") or {}
+                        for key in ("name", "shortDisplayName", "displayName"):
+                            if team.get(key):
+                                entry["teams"].add(team[key])
+    return live
 
 
 # ---------------------------------------------------------------------------
@@ -552,7 +625,7 @@ def recommendation(s, total: int, kind: str) -> str:
     return "Low priority."
 
 
-def format_alert(s, parts, kind: str, new_terms=None) -> str:
+def format_alert(s, parts, kind: str, new_terms=None, playing: bool = False) -> str:
     def e(text, quote=False):
         return html.escape(text, quote=quote)
 
@@ -575,6 +648,8 @@ def format_alert(s, parts, kind: str, new_terms=None) -> str:
         lines.insert(1, f"<i>Ongoing storyline, first flagged {first.strftime('%b')} {first.day} "
                         f"({days} day{'s' if days != 1 else ''} ago)</i>")
 
+    if playing:
+        lines.append(f"🔴 {e(s['team'])} game is on now / just ended")
     if new_terms:
         lines.append(f"New info: {e(', '.join(drop_subphrases(new_terms)))}")
     if s["terms"]:
@@ -623,13 +698,12 @@ def send_telegram(text: str, dry_run: bool) -> bool:
 # Main
 # ---------------------------------------------------------------------------
 
-def run(dry_run: bool):
-    state, fresh_start = load_state()
+def process_items(state, items) -> set:
+    """Record new headlines and merge them into stories. Returns story ids touched."""
     max_age = timedelta(hours=SETTINGS["max_story_age_hours"])
-
     touched = set()
     new_items = 0
-    for item in fetch_all():
+    for item in items:
         key = short_hash(normalize(item["title"]) + "|" + normalize(item["source"]))
         if key in state["seen"]:
             continue
@@ -641,27 +715,11 @@ def run(dry_run: bool):
             continue
         new_items += 1
         touched.add(merge_item(state, item, info))
-
     print(f"{new_items} new injury headlines, {len(touched)} stories touched")
+    return touched
 
-    if fresh_start:
-        # First run (or lost state): record what's already out there without
-        # alerting, otherwise you'd get a flood of old stories at once.
-        for sid in touched:
-            s = state["stories"][sid]
-            parts = score_story(s)
-            s.update(alerted=True, alerted_score=parts["total"], last_alert=iso(NOW),
-                     alerted_terms=sorted(set(s["terms"]) | set(s.get("milestones", []))))
-        save_state(state)
-        msg = (
-            "✅ <b>Injury monitor is live.</b>\n"
-            f"Baseline recorded ({len(touched)} current stories). "
-            "You'll be alerted about new injuries from here on."
-        )
-        send_telegram(msg, dry_run)
-        print("First run: baseline saved, no alerts sent.")
-        return
 
+def send_alerts(state, touched, live_teams, dry_run: bool):
     threshold = SETTINGS["alert_threshold"]
     high = SETTINGS["high_priority_threshold"]
     alerts = []
@@ -690,15 +748,77 @@ def run(dry_run: bool):
     alerts.sort(key=lambda a: -a[1]["total"])
     for sid, parts, kind, new_terms in alerts:
         s = state["stories"][sid]
-        if send_telegram(format_alert(s, parts, kind, new_terms), dry_run):
+        playing = bool(s.get("team")) and s["team"] in live_teams.get(s["league"], set())
+        if send_telegram(format_alert(s, parts, kind, new_terms, playing), dry_run):
             if kind == "UPDATE":
                 s["updates_sent"] += 1
             s.update(alerted=True, alerted_score=parts["total"], last_alert=iso(NOW),
                      alerted_terms=sorted(set(s["terms"]) | set(s.get("milestones", []))))
         # If sending failed, the story stays un-alerted and is retried next run.
-
     print(f"Sent {len(alerts)} alert(s)")
+
+
+def tick():
+    """Advance the clock used for timestamps (live mode runs for several minutes)."""
+    global NOW
+    NOW = datetime.now(timezone.utc)
+
+
+def run(dry_run: bool):
+    state, fresh_start = load_state()
+    live = detect_live_games()
+    live_teams = {lg: info["teams"] for lg, info in live.items()}
+    if live:
+        print("LIVE: " + "; ".join(f"{lg.upper()} ({info['why']})" for lg, info in live.items()))
+
+    # Overnight with no games: a full sweep every 15 minutes is plenty.
+    quiet = SETTINGS.get("quiet_hours", {})
+    hour_et = NOW.astimezone(EASTERN).hour
+    last = state.get("last_sweep")
+    if (not live and not fresh_start and last and quiet
+            and quiet["start_hour_et"] <= hour_et < quiet["end_hour_et"]
+            and NOW - parse_iso(last) < timedelta(minutes=quiet["sweep_every_minutes"] - 1)):
+        print(f"Quiet hours ({hour_et}:00 ET), last sweep {last}; skipping this run.")
+        return
+
+    # 1) Full sweep of every search and feed.
+    touched = process_items(state, fetch_all())
+    state["last_sweep"] = iso(NOW)
+
+    if fresh_start:
+        # First run (or lost state): record what's already out there without
+        # alerting, otherwise you'd get a flood of old stories at once.
+        for sid in touched:
+            s = state["stories"][sid]
+            parts = score_story(s)
+            s.update(alerted=True, alerted_score=parts["total"], last_alert=iso(NOW),
+                     alerted_terms=sorted(set(s["terms"]) | set(s.get("milestones", []))))
+        save_state(state)
+        msg = (
+            "✅ <b>Injury monitor is live.</b>\n"
+            f"Baseline recorded ({len(touched)} current stories). "
+            "You'll be alerted about new injuries from here on."
+        )
+        send_telegram(msg, dry_run)
+        print("First run: baseline saved, no alerts sent.")
+        return
+
+    send_alerts(state, touched, live_teams, dry_run)
     save_state(state)
+
+    # 2) Live mode: games are on, so keep re-checking the in-game searches for
+    #    the live leagues every ~60s until the next scheduled run takes over.
+    lm = SETTINGS.get("live_mode", {})
+    if not (live and lm.get("enabled")):
+        return
+    started = datetime.now(timezone.utc)
+    while (datetime.now(timezone.utc) - started).total_seconds() + lm["poll_seconds"] <= lm["loop_seconds"]:
+        time.sleep(lm["poll_seconds"])
+        tick()
+        print(f"\n-- live re-check {NOW.astimezone(EASTERN):%H:%M:%S} ET --")
+        touched = process_items(state, fetch_live(list(live)))
+        send_alerts(state, touched, live_teams, dry_run)
+        save_state(state)
 
 
 def main():

@@ -11,6 +11,42 @@
   "update_cooldown_minutes": 30,
   "max_updates_per_story": 8,
 
+  "live_mode": {
+    "_note": "When ESPN's scoreboard shows a game in progress (or starting/just ended), each run keeps re-checking that league's in-game searches every poll_seconds until the next scheduled run. Set enabled to false to turn this off.",
+    "enabled": true,
+    "poll_seconds": 60,
+    "loop_seconds": 240,
+    "pregame_minutes": 90,
+    "postgame_minutes": 60,
+    "game_hours": {"nfl": 3.5, "nba": 2.5, "mlb": 3.0, "nhl": 2.75, "soccer": 2.0},
+    "scoreboards": {
+      "nfl": ["https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"],
+      "nba": ["https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"],
+      "mlb": ["https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"],
+      "nhl": ["https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"],
+      "soccer": [
+        "https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard",
+        "https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.champions/scoreboard",
+        "https://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/scoreboard",
+        "https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1/scoreboard"
+      ]
+    },
+    "live_queries": {
+      "nfl": ["NFL injury", "NFL \"carted off\"", "NFL \"won't return\" OR \"will not return\" OR \"questionable to return\"", "quarterback injury", "NFL \"locker room\" OR \"blue tent\""],
+      "nba": ["NBA injury", "NBA \"won't return\" OR \"will not return\" OR \"questionable to return\"", "NBA \"locker room\" OR \"went down\""],
+      "mlb": ["MLB injury", "MLB \"left the game\" OR \"exits\""],
+      "nhl": ["NHL injury", "NHL \"won't return\" OR \"will not return\""],
+      "soccer": ["\"Premier League\" injury", "\"Champions League\" injury", "\"MLS\" injury"]
+    }
+  },
+
+  "quiet_hours": {
+    "_note": "Overnight (Eastern time) with no games on, run a full sweep only every sweep_every_minutes instead of every 5.",
+    "start_hour_et": 2,
+    "end_hour_et": 7,
+    "sweep_every_minutes": 15
+  },
+
   "league_multiplier": {
     "nfl": 1.0,
     "nba": 1.0,
