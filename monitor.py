@@ -788,6 +788,9 @@ def merge_item(state, item, info):
         }
     s = state["stories"][sid]
     s["last_seen"] = iso(NOW)
+    pub = iso(min(item["published"], NOW))
+    if pub < s.get("first_published", pub + "~"):
+        s["first_published"] = pub
     s["team"] = s["team"] or info["team"]
     s["is_qb"] = s["is_qb"] or info["is_qb"]
     s["is_star"] = s["is_star"] or info["is_star"]
@@ -875,6 +878,11 @@ def format_alert(s, parts, kind: str, new_terms=None, playing: bool = False) -> 
     lines.append(f"{n} outlet{'s' if n != 1 else ''} reporting in the last "
                  f"{SETTINGS['buzz_window_hours']}h")
     lines.append(recommendation(s, total, kind))
+    if kind == "NEW" and s.get("first_published"):
+        lag = int((NOW - parse_iso(s["first_published"])).total_seconds() // 60)
+        if lag >= 20:
+            lines.append(f"⏱ First reported {lag // 60}h {lag % 60}m ago" if lag >= 60
+                         else f"⏱ First reported {lag} min ago")
     lines.append(
         f"<code>pop {parts['popularity']} · buzz {parts['momentum']}"
         f"{' (carried over)' if parts.get('carried') else ''} · "
@@ -916,9 +924,21 @@ def send_telegram(text: str, dry_run: bool) -> bool:
 # Main
 # ---------------------------------------------------------------------------
 
+def catch_up_window(state) -> timedelta:
+    """Normally only headlines from the last few hours count. If runs were
+    missed (GitHub delays, outage), widen the window to cover the gap so those
+    stories are still picked up, just late, capped at 12 hours."""
+    window = timedelta(hours=SETTINGS["max_story_age_hours"])
+    last = state.get("last_sweep")
+    if last:
+        gap = NOW - parse_iso(last) + timedelta(minutes=30)
+        window = max(window, min(gap, timedelta(hours=12)))
+    return window
+
+
 def process_items(state, items) -> set:
     """Record new headlines and merge them into stories. Returns story ids touched."""
-    max_age = timedelta(hours=SETTINGS["max_story_age_hours"])
+    max_age = catch_up_window(state)
     touched = set()
     new_items = 0
     for item in items:

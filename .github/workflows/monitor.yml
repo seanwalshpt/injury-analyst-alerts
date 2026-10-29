@@ -1,15 +1,19 @@
 name: Injury monitor
 
 on:
+  # Main trigger: an external free scheduler (cron-job.org) calls GitHub's
+  # "run workflow" API every 5 minutes with from_scheduler=true. GitHub's own
+  # schedule below is only a backup: in practice it fired just 4-5 times a day.
   schedule:
-    # Every 5 minutes (GitHub's minimum), offset from :00 because runs at the
-    # top of the hour are the most likely to be delayed. GitHub does not
-    # guarantee exact timing; expect occasional delays during busy periods.
     - cron: "2-59/5 * * * *"
   workflow_dispatch:
     inputs:
       test_message:
         description: "Only send a test Telegram message"
+        type: boolean
+        default: false
+      from_scheduler:
+        description: "Set by the external scheduler (leave unchecked for manual runs)"
         type: boolean
         default: false
 
@@ -23,10 +27,10 @@ permissions:
 
 jobs:
   check:
-    # Scheduled runs only happen once you create the repository variable
-    # MONITOR_ENABLED = true (Settings > Secrets and variables > Actions > Variables).
-    # Manual runs from the Actions tab always work. Skipped runs cost nothing.
-    if: github.event_name == 'workflow_dispatch' || vars.MONITOR_ENABLED == 'true'
+    # Automatic runs (GitHub schedule or the external scheduler) only happen
+    # while the repository variable MONITOR_ENABLED = true. Manual runs from the
+    # Actions tab always work. Skipped runs cost nothing.
+    if: vars.MONITOR_ENABLED == 'true' || (github.event_name == 'workflow_dispatch' && !inputs.from_scheduler)
     runs-on: ubuntu-latest
     timeout-minutes: 8
 

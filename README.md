@@ -54,9 +54,27 @@ Edit these files directly on GitHub (open the file → pencil icon → **Commit 
 - `config/settings.json`: alert thresholds, league weights, and the news searches that are run.
 - `config/teams.json`: team names used to label alerts.
 
+## Reliable 5-minute runs (external scheduler)
+
+GitHub's built-in schedule is "best effort" and in practice started this monitor only 4–5 times a day. So a free external scheduler, [cron-job.org](https://cron-job.org), asks GitHub to run the workflow every 5 minutes. GitHub's own schedule stays on as a backup.
+
+Setup (one time):
+1. **Create a token.** GitHub → profile picture → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token. Repository access: *Only select repositories* → `injury-analyst-alerts`. Permissions → Repository permissions → **Actions: Read and write**. Copy the token.
+2. **Create the cron job** at cron-job.org:
+   - URL: `https://api.github.com/repos/seanwalshpt/injury-analyst-alerts/actions/workflows/monitor.yml/dispatches`
+   - Schedule: every 5 minutes
+   - Advanced → Request method: `POST`
+   - Headers: `Authorization: Bearer YOUR_TOKEN`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, `Content-Type: application/json`
+   - Request body: `{"ref":"main","inputs":{"from_scheduler":"true"}}`
+   - Test run should return status **204** (or 200).
+
+The token can only trigger or read runs of this one repository. If it expires, runs fall back to GitHub's unreliable schedule. Create a new token and paste it into the cron job.
+
+If runs are ever missed, the next run looks back over the gap (up to 12 hours) so stories are caught late instead of lost; late alerts show "⏱ First reported … ago".
+
 ## Turning it on and off
 
-- **Off:** Settings → Secrets and variables → Actions → **Variables** tab → set `MONITOR_ENABLED` to `false` (or delete it).
+- **Off:** Settings → Secrets and variables → Actions → **Variables** tab → set `MONITOR_ENABLED` to `false` (or delete it). This also stops runs requested by cron-job.org.
 - **On:** same place, `MONITOR_ENABLED` = `true`.
 - **Run once now / send a test message:** Actions tab → **Injury monitor** → **Run workflow** (tick *Only send a test Telegram message* for a test).
 
