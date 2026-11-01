@@ -1,9 +1,14 @@
 name: Injury monitor
 
 on:
-  # Main trigger: an external free scheduler (cron-job.org) calls GitHub's
-  # "run workflow" API every 5 minutes with from_scheduler=true. GitHub's own
-  # schedule below is only a backup: in practice it fired just 4-5 times a day.
+  # How runs start:
+  # - While games are on or coming up (within 8h), each run starts the next one
+  #   itself when it finishes ("Queue the next check" below), so coverage is
+  #   continuous on game days.
+  # - GitHub's schedule (unreliable, often only every few hours) restarts that
+  #   chain if it ever stops, and covers no-game hours.
+  # - Optional: an external scheduler such as cron-job.org can also call the
+  #   "run workflow" API with from_scheduler=true (see README).
   schedule:
     - cron: "2-59/5 * * * *"
   workflow_dispatch:
@@ -13,7 +18,7 @@ on:
         type: boolean
         default: false
       from_scheduler:
-        description: "Set by the external scheduler (leave unchecked for manual runs)"
+        description: "Set by automatic triggers (leave unchecked for manual runs)"
         type: boolean
         default: false
 
@@ -24,6 +29,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write   # only used to start the next check (GitHub's own token, this repo only)
 
 jobs:
   check:
@@ -56,6 +62,7 @@ jobs:
           restore-keys: injury-state-
 
       - name: Check for new injuries
+        id: check
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -69,3 +76,11 @@ jobs:
         with:
           path: state
           key: injury-state-${{ github.run_id }}
+
+      - name: Queue the next check
+        # Runs even if the check step hit an error, so one bad network moment
+        # on a Sunday doesn't stop coverage. MONITOR_ENABLED=false still stops it.
+        if: ${{ always() && !inputs.test_message && steps.check.outputs.chain == 'true' && vars.MONITOR_ENABLED == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run monitor.yml -R "${{ github.repository }}" --ref main -f from_scheduler=true

@@ -13,10 +13,13 @@
   "max_updates_per_story": 8,
 
   "live_mode": {
-    "_note": "When ESPN's scoreboard shows a game in progress (or starting/just ended), each run keeps re-checking that league's in-game searches every poll_seconds until the next scheduled run. Set enabled to false to turn this off.",
+    "_note": "While any game is live or starts within chain_lookahead_hours, runs go back to back: each lasts ~loop_seconds, re-checks live leagues every poll_seconds, does a full sweep every full_sweep_minutes, then starts the next run. nfl_play_by_play reads injury notes from the official NFL play log. Set enabled to false to go back to occasional runs only.",
     "enabled": true,
     "poll_seconds": 60,
     "loop_seconds": 240,
+    "full_sweep_minutes": 5,
+    "chain_lookahead_hours": 8,
+    "nfl_play_by_play": true,
     "pregame_minutes": 90,
     "postgame_minutes": 60,
     "game_hours": {"nfl": 3.5, "nba": 2.5, "mlb": 3.0, "nhl": 2.75, "soccer": 2.0},

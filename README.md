@@ -38,13 +38,17 @@ Fantasy, betting, and generic "injury report" roundups are ignored unless they n
 
 | When | How often |
 |---|---|
-| A game in that league is **live** (or starts within 90 min, or ended within the last hour) | Full sweep every 5 min **plus** in-game searches for that league about **every 60 seconds** |
-| Normal hours, no games | Full sweep every 5 min |
-| Overnight 2–7 AM ET, no games | Full sweep every 15 min |
+| Any game **live**, or starting within 8 hours | Runs back to back all day: full sweep every 5 min, live leagues re-checked about **every 60 seconds**, NFL play-by-play read every 60 seconds |
+| No games for 8+ hours | Whenever GitHub's own schedule fires (unreliable, can be hours apart). Missed time is caught up, up to 12 hours back |
+| Overnight 2–7 AM ET, no games | At most every 15 min |
 
-"Live" comes from ESPN's public scoreboard, so it automatically follows the real schedule: Sunday/Monday/Thursday NFL, Saturday games late in the season, London and holiday games, nightly NBA, playoffs, and off-seasons. If the scoreboard can't be reached, the monitor falls back to normal 5-minute sweeps. Alerts about a team that's playing right now are tagged 🔴.
+**Back-to-back runs:** each run lasts about 4 minutes and, while games are on or coming up, starts the next run itself when it finishes (using GitHub's built-in token, limited to this repo). GitHub's own scheduler only fired every 3–6 hours, so it's now just the backup that restarts the chain.
 
-GitHub's scheduler can't trigger more often than every 5 minutes. The 60-second checks happen *inside* each run while games are on, which is free on a public repo.
+**NFL play-by-play:** the official play log notes injuries within a minute or two ("L.Jackson was injured during the play. His return is Questionable."), often before any article exists. These alerts show **NFL play-by-play** as the source and count like two outlets reporting. Severity follows the wording: questionable/unspecified is often a quick check, so only tier-1 stars alert on that alone. Doubtful or ruled out alerts for tier 1–3. "Ruled out" updates skip the 30-minute update cooldown. NBA/NHL/MLB play logs don't record injuries, so those leagues rely on news searches every 60 seconds.
+
+"Live" comes from ESPN's public scoreboard, so it automatically follows the real schedule (Sunday/Monday/Thursday NFL, London games, nightly NBA, playoffs, off-seasons). If ESPN can't be reached, the monitor falls back to normal sweeps. Alerts about a team that's playing right now are tagged 🔴.
+
+**Checking it's working:** every run posts a one-line **Run summary** at the top of its page in the Actions tab: sweeps, live checks, feeds ok/failed, headlines, alerts sent, play-by-play injuries. On game days the Actions tab should show a new run about every 5 minutes.
 
 ## Customizing (no coding needed)
 
@@ -54,9 +58,9 @@ Edit these files directly on GitHub (open the file → pencil icon → **Commit 
 - `config/settings.json`: alert thresholds, league weights, and the news searches that are run.
 - `config/teams.json`: team names used to label alerts.
 
-## Reliable 5-minute runs (external scheduler)
+## Optional: external scheduler (for no-game hours)
 
-GitHub's built-in schedule is "best effort" and in practice started this monitor only 4–5 times a day. So a free external scheduler, [cron-job.org](https://cron-job.org), asks GitHub to run the workflow every 5 minutes. GitHub's own schedule stays on as a backup.
+Game days are covered by back-to-back runs (above). Between games (e.g. weekday mornings with no games for 8+ hours), only GitHub's unreliable schedule runs. If you want 5-minute checks then too, a free external scheduler, [cron-job.org](https://cron-job.org), can ask GitHub to run the workflow every 5 minutes. This is optional.
 
 Setup (one time):
 1. **Create a token.** GitHub → profile picture → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token. Repository access: *Only select repositories* → `injury-analyst-alerts`. Permissions → Repository permissions → **Actions: Read and write**. Copy the token.

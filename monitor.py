@@ -43,6 +43,18 @@ STATE_FILE = ROOT / "state" / "state.json"
 HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (injury-analyst-alerts; +https://github.com)"}
 NOW = datetime.now(timezone.utc)
 EASTERN = ZoneInfo("America/New_York")
+STATS = {k: 0 for k in (
+    "feeds_ok", "feeds_failed", "headlines", "new_injury", "alerts", "sweeps",
+    "live_checks", "scoreboards_ok", "scoreboards_failed", "pbp_ok", "pbp_failed",
+    "pbp_injuries")}
+
+
+def gh_output(key: str, value: str):
+    """Pass a value to later workflow steps (no-op outside GitHub Actions)."""
+    path = os.environ.get("GITHUB_OUTPUT")
+    if path:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{key}={value}\n")
 
 # ---------------------------------------------------------------------------
 # Injury vocabulary. Each phrase is matched as whole words, case-insensitive.
@@ -152,7 +164,10 @@ SOFT_NEWS = [
 # Question/explainer headlines ("How long will X be out?") only count as an
 # update if the headline also contains a concrete diagnosis or status.
 EXPLAINER = re.compile(r"^(?:why|how|what|should|could|is|are|will|does|did)\b|\?\s*$")
-NOT_STATUS = {"hospital", "in pain"}  # too vague to count as a status change
+NOT_STATUS = {"hospital", "in pain"}
+# In-game status changes that skip the 30-minute update cooldown.
+URGENT = {"ruled out", "will not return", "won't return", "ruled out for the rest",
+          "out for the rest of the game", "carted off"}  # too vague to count as a status change
 
 STOPWORDS = set(
     "a an the and or of to in on at for with from by as is are was were be been his her "
@@ -454,8 +469,10 @@ def fetch_feed(url: str, league: str, is_google: bool):
     try:
         resp = requests.get(url, headers=HTTP_HEADERS, timeout=8)
         resp.raise_for_status()
+        STATS["feeds_ok"] += 1
     except requests.RequestException as e:
         print(f"  ! feed failed ({league}): {url[:90]} -> {e}")
+        STATS["feeds_failed"] += 1
         return []
     parsed = feedparser.parse(resp.content)
     items = []
@@ -523,14 +540,19 @@ def run_jobs(jobs, budget_seconds: int = 100):
 # Live game detection (ESPN's public scoreboard)
 # ---------------------------------------------------------------------------
 
-def detect_live_games() -> dict:
-    """{league: {"teams": set(team names), "why": str}} for leagues with a game
-    in progress, about to start, or just finished (post-game injury news).
-    If ESPN can't be reached, returns {} and the monitor runs at normal speed."""
+def detect_live_games():
+    """Returns (live, soon, events):
+      live   {league: {"teams": set, "why": str}} for leagues with a game in
+             progress, about to start, or just finished (post-game news)
+      soon   True if any game starts within chain_lookahead_hours
+      events [{"league", "id", "teams"}] for games in progress (play-by-play)
+    If ESPN can't be reached, returns empty results and the monitor falls back
+    to normal sweeps."""
     lm = SETTINGS.get("live_mode", {})
     if not lm.get("enabled"):
-        return {}
-    live = {}
+        return {}, False, []
+    live, soon, events = {}, False, []
+    lookahead = timedelta(hours=lm.get("chain_lookahead_hours", 8))
     for league, urls in lm["scoreboards"].items():
         game_len = timedelta(hours=lm["game_hours"].get(league, 3))
         pre = timedelta(minutes=lm["pregame_minutes"])
@@ -539,16 +561,20 @@ def detect_live_games() -> dict:
             try:
                 resp = requests.get(url, headers=HTTP_HEADERS, timeout=10)
                 resp.raise_for_status()
-                events = resp.json().get("events", [])
+                evs = resp.json().get("events", [])
+                STATS["scoreboards_ok"] += 1
             except (requests.RequestException, ValueError) as e:
                 print(f"  ! scoreboard failed ({league}): {type(e).__name__}")
+                STATS["scoreboards_failed"] += 1
                 continue
-            for ev in events:
+            for ev in evs:
                 state = ((ev.get("status") or {}).get("type") or {}).get("state")
                 try:
                     start = datetime.fromisoformat(ev["date"].replace("Z", "+00:00"))
                 except (KeyError, ValueError):
                     continue
+                if state == "pre" and start - NOW <= lookahead:
+                    soon = True
                 if state == "in":
                     why = "in progress"
                 elif state == "pre" and start - pre <= NOW:
@@ -560,13 +586,114 @@ def detect_live_games() -> dict:
                 entry = live.setdefault(league, {"teams": set(), "why": why})
                 if why == "in progress":
                     entry["why"] = why
+                names = set()
                 for comp in ev.get("competitions", [])[:1]:
                     for c in comp.get("competitors", []):
                         team = c.get("team") or {}
                         for key in ("name", "shortDisplayName", "displayName"):
                             if team.get(key):
-                                entry["teams"].add(team[key])
-    return live
+                                names.add(team[key])
+                entry["teams"] |= names
+                if state == "in" and ev.get("id"):
+                    events.append({"league": league, "id": str(ev["id"]), "teams": names})
+    return live, soon, events
+
+
+# ---------------------------------------------------------------------------
+# Official play-by-play (NFL): "L.Jackson was injured during the play. His
+# return is Questionable." appears in the league's own play log within a
+# minute or two, often before any article exists.
+# ---------------------------------------------------------------------------
+
+PBP_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event={id}"
+PBP_INJURY = re.compile(
+    r"\(?([A-Z][A-Za-z'\-]*\.\s?[A-Z][A-Za-z'\-]+(?:\s(?:Jr|Sr|II|III|IV)\.?)?)\)?\s+"
+    r"(?i:(was injured during the play|has been ruled out|is ruled out|will not return"
+    r"|is out for the game|(?:his )?return is (?:questionable|doubtful|probable)))")
+PBP_RETURN = re.compile(r"(?:his )?return is (questionable|doubtful|probable)", re.I)
+PBP_OUT = re.compile(r"\b(ruled out|will not return|won't return|is out for the game)\b", re.I)
+SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
+
+
+def resolve_abbrev(abbrev: str, team_names: set):
+    """'L.Jackson' on the Ravens -> ('Lamar Jackson', 'Ravens')."""
+    toks = [t for t in name_tokens(abbrev.replace(".", ". ")) if t not in SUFFIXES]
+    if len(toks) < 2:
+        return None, None
+    initial, last = toks[0][0], toks[-1]
+    hits = []
+    for p in ROSTERS["players"].get("nfl", {}).values():
+        if p["team"] not in team_names:
+            continue
+        pt = [t for t in name_tokens(p["name"]) if t not in SUFFIXES]
+        if len(pt) >= 2 and pt[-1] == last and pt[0].startswith(initial):
+            hits.append(p)
+    if len(hits) == 1:
+        return hits[0]["name"], hits[0]["team"]
+    return None, None
+
+
+def fetch_pbp(events, state):
+    """Injury notes from the play-by-play of NFL games in progress."""
+    if not SETTINGS.get("live_mode", {}).get("nfl_play_by_play", True):
+        return []
+    items = []
+    for ev in events:
+        if ev["league"] != "nfl":
+            continue
+        try:
+            r = requests.get(PBP_URL.format(id=ev["id"]), headers=HTTP_HEADERS, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+            STATS["pbp_ok"] += 1
+        except (requests.RequestException, ValueError) as e:
+            print(f"  ! play-by-play failed ({ev['id']}): {type(e).__name__}")
+            STATS["pbp_failed"] += 1
+            continue
+        for play in _walk(data, "text"):
+            text = play.get("text") or ""
+            low = text.lower()
+            if not any(k in low for k in ("injured during the play", "ruled out",
+                                          "will not return", "out for the game", "return is")):
+                continue
+            key = short_hash(f"pbp|{ev['id']}|{play.get('id') or text}")
+            if key in state["seen"]:
+                continue
+            state["seen"][key] = iso(NOW)
+            for m in PBP_INJURY.finditer(text):
+                name, team = resolve_abbrev(m.group(1), ev["teams"])
+                after = m.group(2) + " " + text[m.end():m.end() + 120]
+                ret = PBP_RETURN.search(after)
+                out = PBP_OUT.search(after)
+                if out:
+                    status = ", ruled out"
+                elif ret:
+                    status = f", {ret.group(1).lower()} to return"
+                else:
+                    status = ""
+                who = f"{team}' {name}" if team and team.endswith("s") else (f"{team}'s {name}" if team else m.group(1))
+                STATS["pbp_injuries"] += 1
+                print(f"  + play-by-play: {who} injured{status}")
+                # Wording sets severity: "questionable"/unspecified is often a
+                # quick check (players return next series), so only superstars
+                # alert on that alone; "doubtful"/"ruled out" alert for stars too.
+                serious = bool(out) or (ret is not None and ret.group(1).lower() == "doubtful")
+                if "injured" not in m.group(2).lower():
+                    what = "injury update"
+                elif serious:
+                    what = "injured on the play, left the game"
+                else:
+                    what = "injured on the play"
+                items.append({
+                    "title": f"{who} {what}{status}",
+                    "link": f"https://www.espn.com/nfl/game/_/gameId/{ev['id']}",
+                    "source": "NFL play-by-play",
+                    "summary": "",
+                    "published": NOW,
+                    "league": "nfl",
+                    "official": True,
+                })
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -706,6 +833,11 @@ def heat_points(story) -> int:
 
 def score_story(story) -> dict:
     current = momentum_points(recent_sources(story))
+    # An injury in the league's own play-by-play is confirmed, not rumor:
+    # count it like two outlets reporting it.
+    off = story.get("official_at")
+    if off and NOW - parse_iso(off) <= timedelta(hours=SETTINGS["buzz_window_hours"]):
+        current = max(current, momentum_points(2))
     heat = heat_points(story)
     parts = {
         "popularity": popularity_points(story),
@@ -788,6 +920,8 @@ def merge_item(state, item, info):
         }
     s = state["stories"][sid]
     s["last_seen"] = iso(NOW)
+    if item.get("official"):
+        s["official_at"] = iso(NOW)
     pub = iso(min(item["published"], NOW))
     if pub < s.get("first_published", pub + "~"):
         s["first_published"] = pub
@@ -960,6 +1094,8 @@ def process_items(state, items) -> set:
         sid = merge_item(state, item, info)
         touched.add(sid)
         touched |= credit_other_players(state, item, info, sid)
+    STATS["headlines"] += len(items)
+    STATS["new_injury"] += new_items
     print(f"{new_items} new injury headlines, {len(touched)} stories touched")
     return touched
 
@@ -1020,7 +1156,7 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
             already = set(s["alerted_terms"])
             new_all = [t for t in s.get("pending", [])
                        if not any(t in a or a in t for a in already)]
-            new_severe = [t for t in new_all if t in SEVERE]
+            new_severe = [t for t in new_all if t in SEVERE or t in URGENT]
             became_high = s["alerted_score"] < high <= parts["total"]
             last = s.get("last_alert")
             cooled = last is None or NOW - parse_iso(last) >= timedelta(
@@ -1047,6 +1183,7 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
             failed.add(sid)  # retried next run
     for sid in touched - failed - deferred:
         state["stories"][sid]["pending"] = []
+    STATS["alerts"] += len(alerts) - len(failed)
     print(f"Sent {len(alerts) - len(failed)} alert(s)")
 
 
@@ -1057,10 +1194,16 @@ def tick():
 
 
 def run(dry_run: bool):
+    t0 = time.monotonic()
+    lm = SETTINGS.get("live_mode", {})
     state, fresh_start = load_state()
     load_rosters()
-    live = detect_live_games()
+    live, soon, events = detect_live_games()
     live_teams = {lg: info["teams"] for lg, info in live.items()}
+    # Keep the chain of back-to-back runs going while games are on or coming
+    # up. Decided up front so a later network error doesn't break coverage.
+    chain = bool(live or soon)
+    gh_output("chain", "true" if chain else "false")
     if live:
         print("LIVE: " + "; ".join(f"{lg.upper()} ({info['why']})" for lg, info in live.items()))
 
@@ -1068,7 +1211,7 @@ def run(dry_run: bool):
     quiet = SETTINGS.get("quiet_hours", {})
     hour_et = NOW.astimezone(EASTERN).hour
     last = state.get("last_sweep")
-    if (not live and not fresh_start and last and quiet
+    if (not chain and not fresh_start and last and quiet
             and quiet["start_hour_et"] <= hour_et < quiet["end_hour_et"]
             and NOW - parse_iso(last) < timedelta(minutes=quiet["sweep_every_minutes"] - 1)):
         print(f"Quiet hours ({hour_et}:00 ET), last sweep {last}; skipping this run.")
@@ -1076,9 +1219,10 @@ def run(dry_run: bool):
 
     refresh_rosters()
 
-    # 1) Full sweep of every search and feed.
-    touched = process_items(state, fetch_all())
+    # 1) Full sweep of every search and feed (+ live play-by-play).
+    touched = process_items(state, fetch_all() + fetch_pbp(events, state))
     state["last_sweep"] = iso(NOW)
+    STATS["sweeps"] += 1
 
     if fresh_start:
         # First run (or lost state): record what's already out there without
@@ -1101,19 +1245,46 @@ def run(dry_run: bool):
     send_alerts(state, touched, live_teams, dry_run)
     save_state(state)
 
-    # 2) Live mode: games are on, so keep re-checking the in-game searches for
-    #    the live leagues every ~60s until the next scheduled run takes over.
-    lm = SETTINGS.get("live_mode", {})
-    if not (live and lm.get("enabled")):
+    # 2) While games are on or coming up, stay running for ~4 minutes:
+    #    live leagues re-checked every ~60s, full sweep every 5 minutes. The
+    #    workflow then starts the next run, so coverage is continuous.
+    if not (chain and lm.get("enabled")):
         return
-    started = datetime.now(timezone.utc)
-    while (datetime.now(timezone.utc) - started).total_seconds() + lm["poll_seconds"] <= lm["loop_seconds"]:
+    sweep_every = timedelta(minutes=lm.get("full_sweep_minutes", 5))
+    while time.monotonic() - t0 + lm["poll_seconds"] <= lm["loop_seconds"]:
         time.sleep(lm["poll_seconds"])
         tick()
-        print(f"\n-- live re-check {NOW.astimezone(EASTERN):%H:%M:%S} ET --")
-        touched = process_items(state, fetch_live(list(live)))
+        if NOW - parse_iso(state["last_sweep"]) >= sweep_every:
+            live, soon, events = detect_live_games()
+            live_teams = {lg: info["teams"] for lg, info in live.items()}
+            print(f"\n-- full sweep {NOW.astimezone(EASTERN):%H:%M:%S} ET --")
+            touched = process_items(state, fetch_all() + fetch_pbp(events, state))
+            state["last_sweep"] = iso(NOW)
+            STATS["sweeps"] += 1
+        elif live:
+            print(f"\n-- live re-check {NOW.astimezone(EASTERN):%H:%M:%S} ET --")
+            touched = process_items(state, fetch_live(list(live)) + fetch_pbp(events, state))
+            STATS["live_checks"] += 1
+        else:
+            continue
         send_alerts(state, touched, live_teams, dry_run)
         save_state(state)
+
+
+def summarize():
+    """One-line run summary, shown on the run's page in GitHub (and readable
+    later for troubleshooting)."""
+    st = STATS
+    parts = [
+        f"sweeps {st['sweeps']}", f"live checks {st['live_checks']}",
+        f"feeds ok {st['feeds_ok']} / failed {st['feeds_failed']}",
+        f"headlines {st['headlines']}", f"new injury {st['new_injury']}",
+        f"alerts sent {st['alerts']}",
+        f"scoreboards ok {st['scoreboards_ok']} / failed {st['scoreboards_failed']}",
+        f"play-by-play ok {st['pbp_ok']} / failed {st['pbp_failed']} / injuries {st['pbp_injuries']}",
+    ]
+    msg = " | ".join(parts)
+    print(f"::notice title=Run summary::{msg}" if os.environ.get("GITHUB_ACTIONS") else msg)
 
 
 def main():
@@ -1138,7 +1309,10 @@ def main():
         )
         sys.exit(0 if ok else 1)
 
-    run(args.dry_run)
+    try:
+        run(args.dry_run)
+    finally:
+        summarize()
 
 
 if __name__ == "__main__":
