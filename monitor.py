@@ -746,6 +746,7 @@ def analyze(item: dict):
     explainer = bool(EXPLAINER.search(title_n)) and not (title_severe or milestones)
 
     return {
+        "in_game": bool(IN_GAME & set(title_status)) or "injured on the play" in title_n,
         "soft": soft,
         "update_terms": [] if (soft or explainer) else sorted(set(title_status)),
         "player": player["name"] if player else None,
@@ -884,14 +885,18 @@ def save_state(state):
 def find_story(state, item_tokens, info):
     window = timedelta(hours=SETTINGS["story_merge_window_hours"])
     storyline_window = timedelta(days=SETTINGS["storyline_window_days"])
+    new_incident = timedelta(hours=SETTINGS.get("new_incident_hours", 12))
     best, best_sim = None, 0.0
+    player_story = None
     for sid, s in state["stories"].items():
         age = NOW - parse_iso(s["last_seen"])
         if info["player"] and s.get("player"):
-            # Named star: everything about them within the storyline window is
-            # one ongoing storyline (blood clot -> pulmonary embolism -> return).
+            # Named player: everything about them within the storyline window
+            # is one ongoing storyline (blood clot -> pulmonary embolism ->
+            # return). Use their most recent storyline.
             if info["player"] == s["player"] and age <= storyline_window:
-                return sid
+                if player_story is None or s["first_seen"] > state["stories"][player_story]["first_seen"]:
+                    player_story = sid
             continue
         if age > window:
             continue
@@ -901,6 +906,15 @@ def find_story(state, item_tokens, info):
         shared = len(item_tokens & set(s["tokens"]))
         if sim >= 0.5 and shared >= 2 and sim > best_sim:
             best, best_sim = sid, sim
+    if player_story:
+        s = state["stories"][player_story]
+        # A fresh in-game injury (left the game, won't return...) when this
+        # player's storyline has been quiet for 12h+ is a NEW incident, not
+        # an update: e.g. Lamar's thumb today vs. his ankle last week.
+        started = parse_iso(s.get("last_alert") or s["first_seen"])
+        if info.get("in_game") and NOW - started > new_incident:
+            return None
+        return player_story
     return best
 
 
@@ -962,7 +976,8 @@ IN_GAME = {
     "leaves the game", "left game", "exits game", "exits", "exited", "locker room",
     "helped off", "limped off", "limps off", "went down", "goes down", "down on the field",
     "down on the court", "won't return", "will not return", "left practice",
-    "leaves practice", "exits practice", "collapsed on",
+    "leaves practice", "exits practice", "collapsed on", "ruled out for the rest",
+    "out for the rest of the game", "injured on the play",
 }
 
 
