@@ -169,6 +169,98 @@ NOT_STATUS = {"hospital", "in pain"}
 URGENT = {"ruled out", "will not return", "won't return", "ruled out for the rest",
           "out for the rest of the game", "carted off"}  # too vague to count as a status change
 
+# ---------------------------------------------------------------------------
+# Facts, not phrases. Outlets describe the same development many ways
+# ("ruled out" / "won't return" / "out for the rest of the game"). Updates
+# compare these fact categories, so rewording is never "new info".
+# ---------------------------------------------------------------------------
+
+FACTS = {
+    "left the game": ["left the game", "leaves game", "leaves the game", "left game", "exits game",
+                      "exits", "exited", "helped off", "limped off", "limps off", "went down",
+                      "goes down", "down on the field", "down on the court", "locker room",
+                      "injured on the play", "injury scare", "in pain", "collapsed on",
+                      "left practice", "leaves practice", "exits practice", "injured in practice",
+                      "injured at practice", "hurt in practice", "hurt at practice", "practice injury"],
+    "questionable to return": ["questionable to return"],
+    "doubtful to return": ["doubtful to return"],
+    "ruled out": ["won't return", "will not return", "not return", "ruled out for the rest",
+                  "ruled out for remainder", "out for the rest of the game", "out for the game",
+                  "ruled out", "won't play", "will not play", "held out", "inactive"],
+    "carted off": ["carted off", "carted", "stretcher", "stretchered", "ambulance"],
+    "tests scheduled": ["mri", "x-rays", "x-ray", "further tests", "more tests", "underwent tests",
+                        "undergo tests", "evaluated", "being evaluated"],
+    "test results": ["mri results", "mri revealed", "mri reveals", "mri showed", "mri shows",
+                     "mri confirms", "mri confirmed", "imaging", "x-rays negative", "negative x-rays",
+                     "no structural damage", "avoids serious injury", "avoided serious injury",
+                     "dodges serious injury", "diagnosed", "diagnosis"],
+    "minor diagnosis": ["sprain", "sprained", "high ankle sprain", "strain", "strained", "grade 1",
+                        "grade 2", "grade 3", "bone bruise", "contusion", "hyperextended",
+                        "hyperextension", "subluxation"],
+    "timeline": ["will miss", "to miss", "expected to miss", "sidelined", "day-to-day",
+                 "week-to-week", "re-evaluated", "timeline", "out indefinitely"],
+    "injured list": ["injured reserve", "10-day il", "15-day il", "60-day il", "injured list"],
+    "season-ending": ["season-ending", "season ending", "out for the season", "out for season",
+                      "out for the year", "career-threatening"],
+    "surgery": ["surgery"],
+    "concussion": ["concussion", "concussion protocol", "head injury"],
+    "hospital": ["hospital", "hospitalized", "icu", "intensive care"],
+    "setback": ["setback", "aggravated", "re-injured", "reinjured"],
+    "return to play": ["cleared", "activated", "reinstated", "returns to practice", "back at practice",
+                       "set to return", "expected to return", "will return", "will play", "will start",
+                       "designated to return", "21-day window", "back in lineup", "back in the lineup"],
+    "blood clot": ["blood clot", "blood clots", "clot", "clots", "dvt", "deep vein thrombosis"],
+    "pulmonary embolism": ["pulmonary embolism", "embolism"],
+    "cardiac": ["cardiac", "cardiac arrest", "heart condition", "heart issue", "heart attack",
+                "myocarditis", "arrhythmia"],
+}
+FACT_OF = {term: fact for fact, terms in FACTS.items() for term in terms}
+# In-game status ladder: later rungs replace earlier ones. "Questionable"
+# after "ruled out" is not news.
+LADDER = {"left the game": 1, "questionable to return": 2, "doubtful to return": 3,
+          "ruled out": 4, "carted off": 5}
+# Facts important enough to skip the update cooldown.
+SIGNIFICANT = {"ruled out", "carted off", "season-ending", "surgery", "injured list",
+               "concussion", "hospital", "setback", "pulmonary embolism", "cardiac",
+               "blood clot", "torn", "ACL", "MCL", "Achilles", "meniscus", "labrum", "pectoral",
+               "fracture", "dislocation", "spinal / neck"}
+# Never news by themselves.
+IGNORED_FACTS = {"tests scheduled"}
+
+
+def fact_of(term: str) -> str:
+    if term in FACT_OF:
+        return FACT_OF[term]
+    t = term.lower()
+    for key, fact in (("acl", "ACL"), ("mcl", "MCL"), ("achilles", "Achilles"),
+                      ("meniscus", "meniscus"), ("labrum", "labrum"), ("pec", "pectoral"),
+                      ("fractur", "fracture"), ("broken", "fracture"), ("dislocat", "dislocation"),
+                      ("spinal", "spinal / neck"), ("neck", "spinal / neck"),
+                      ("torn", "torn"), ("tear", "torn"), ("ruptured", "torn")):
+        if key in t:
+            return fact
+    return term
+
+
+def new_facts(pending, already_terms):
+    """Facts in `pending` that weren't already covered by earlier alerts."""
+    known = {fact_of(t) for t in already_terms}
+    top = max((LADDER.get(f, 0) for f in known), default=0)
+    fresh = []
+    for f in sorted({fact_of(t) for t in pending}):
+        if f in known or f in IGNORED_FACTS:
+            continue
+        if f in LADDER and LADDER[f] <= top:
+            continue  # e.g. "questionable" after "ruled out"
+        fresh.append(f)
+    # Only report the highest new rung of the ladder.
+    rungs = [f for f in fresh if f in LADDER]
+    if len(rungs) > 1:
+        best = max(rungs, key=LADDER.get)
+        fresh = [f for f in fresh if f not in LADDER or f == best]
+    return fresh
+
+
 STOPWORDS = set(
     "a an the and or of to in on at for with from by as is are was were be been his her "
     "their its after before during vs v. vs. says say said will not out game games "
@@ -743,6 +835,10 @@ def analyze(item: dict):
     title_severe = matches(SEVERE_RX, title_n)
     title_status = [t for t in title_severe + matches(HIGH_RX, title_n) if t not in NOT_STATUS]
     title_status += milestones
+    # "X-rays on his thumb came back negative" -> a test result, however worded.
+    if re.search(r"\b(?:x-rays?|mri|scan|imaging|tests?)\b", title_n) and \
+            re.search(r"\b(?:negative|clean|came back|revealed|reveals|showed|shows|confirm(?:s|ed)?)\b", title_n):
+        title_status.append("x-rays negative" if "negative" in title_n else "mri results")
     explainer = bool(EXPLAINER.search(title_n)) and not (title_severe or milestones)
 
     return {
@@ -1020,9 +1116,10 @@ def format_alert(s, parts, kind: str, new_terms=None, playing: bool = False) -> 
     if playing:
         lines.append(f"🔴 {e(s['team'])} game is on now / just ended")
     if new_terms:
-        lines.append(f"New info: {e(', '.join(drop_subphrases(new_terms)))}")
+        lines.append(f"New info: {e(', '.join(new_terms))}")
     if s["terms"]:
-        lines.append(f"Signals: {e(', '.join(drop_subphrases(s['terms'])[:6]))}")
+        facts = sorted({fact_of(t) for t in s["terms"]} - IGNORED_FACTS)
+        lines.append(f"Signals: {e(', '.join(facts[:6]))}")
     n = recent_sources(s)
     lines.append(f"{n} outlet{'s' if n != 1 else ''} reporting in the last "
                  f"{SETTINGS['buzz_window_hours']}h")
@@ -1168,19 +1265,21 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
             # Once you've been alerted about a story, every real development
             # gets an update, even after the initial buzz has died down.
             # Only details reported in a news headline count (see analyze()).
-            already = set(s["alerted_terms"])
-            new_all = [t for t in s.get("pending", [])
-                       if not any(t in a or a in t for a in already)]
-            new_severe = [t for t in new_all if t in SEVERE or t in URGENT]
-            became_high = s["alerted_score"] < high <= parts["total"]
+            # Compare facts, not wording: rephrasings by other outlets and
+            # more coverage alone are never an update.
+            new_all = new_facts(s.get("pending", []), s["alerted_terms"])
+            urgent = [f for f in new_all if f in SIGNIFICANT]
             last = s.get("last_alert")
             cooled = last is None or NOW - parse_iso(last) >= timedelta(
                 minutes=SETTINGS["update_cooldown_minutes"])
-            # Serious new detail or a jump to high priority: send right away.
-            # Other new detail (left game, won't return, MRI, cleared, activated):
-            # send if we haven't messaged about this story in the last little while.
-            if new_severe or became_high or (new_all and cooled):
-                alerts.append((sid, parts, "UPDATE", new_all))
+            # Significant new fact (ruled out, carted off, tear, surgery...):
+            # send right away. Other new facts: wait out the cooldown so a
+            # story produces at most one message per cooldown period.
+            if urgent or (new_all and cooled):
+                # Show the reported wording ("high ankle sprain, week-to-week"),
+                # not the internal category names.
+                shown = drop_subphrases([t for t in s.get("pending", []) if fact_of(t) in new_all])
+                alerts.append((sid, parts, "UPDATE", shown or new_all))
             elif new_all:
                 deferred.add(sid)  # real news, but we just messaged about this story
 
@@ -1193,7 +1292,12 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
             if kind == "UPDATE":
                 s["updates_sent"] += 1
             s.update(alerted=True, notified=True, alerted_score=parts["total"], last_alert=iso(NOW),
-                     alerted_terms=sorted(set(s["terms"]) | set(s.get("milestones", []))))
+                     alerted_terms=sorted(set(s["terms"]) | set(s.get("milestones", []))
+                                          | set(s.get("pending", []))))
+            print(f"::notice title=Alert sent::{kind} {parts['total']} {s['player'] or '-'} | "
+                  f"{s.get('latest_headline', s['headline'])[:120]}"
+                  + (f" | new: {', '.join(new_terms)}" if new_terms else "")
+                  if os.environ.get("GITHUB_ACTIONS") else "")
         else:
             failed.add(sid)  # retried next run
     for sid in touched - failed - deferred:

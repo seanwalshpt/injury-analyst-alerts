@@ -17,14 +17,14 @@ Automated sports injury monitoring for **The Injury Analyst**. GitHub runs `moni
 - **Severity**: worst wording seen. *Torn, carted off, fracture, season-ending* = 25. *Won't return, locker room, MRI, concussion* = 18. General injury mentions = 12. Routine status = 5. Good news like *cleared* or *no structural damage* is capped at 8.
 - **Content potential**: severity plus visible-mechanism words such as *non-contact, awkward, landed, video, replay*.
 
-**No duplicate spam.** Five outlets reporting the same injury become one story. You get **one alert**, then **🔁 UPDATE** messages only when something genuinely new is reported.
+**No duplicate spam.** Five outlets reporting the same injury become one story. You get **one alert**, then **🔁 UPDATE** messages only when a genuinely new *fact* is reported. Rewording never counts: "ruled out", "won't return", and "out for the rest of the game" are the same fact, and "questionable to return" after "ruled out" is ignored. More coverage alone never triggers an update.
 
 **Storylines.** Everything about a recognized player (star list or current roster) is tracked as one ongoing storyline for 30 days. Example: *Hurts held out with blood clot* (alert) → routine "still monitoring" articles (silent) → *clots progressed to pulmonary embolism* a week later (update, labeled with when the storyline started) → *cleared to return* (update). Updates fire on:
 - a new serious detail (torn, surgery, fracture, embolism, season-ending…): immediately
 - the story jumping to high priority because many outlets are suddenly covering it: immediately
 - other new details (left the game, won't return, MRI, diagnosed, setback, cleared, activated, and diagnosis results like *bone bruise, sprain, grade 2, no structural damage, re-evaluated in two weeks*): at most one per 30 minutes per story
 - once you've been alerted about a story, its updates come through even after the initial buzz dies down
-- maximum 8 updates per storyline
+- maximum 5 updates per storyline
 
 An update only counts if **the headline itself reports a status change** (a diagnosis, setback, ruled out, surgery, return…). Feature, opinion, controversy, and human-interest pieces ("students cheer up teacher with Hurts video", "NFL investigates Ravens' injury-report handling", "Why the Ravens' handling of Lamar is weird") never trigger updates or start stories. Question headlines ("How long will X be out?") count only when they include a concrete diagnosis. Fan-reaction coverage within 12 hours of a new injury still adds to its buzz.
 
