@@ -15,11 +15,11 @@ Updates after that are rare:
 
 | Update | When |
 |---|---|
-| 🔁 **IN-GAME UPDATE** | Within 12 hours of the in-game injury (when viewers are searching it): ruled out / won't return, carted off, or a major change |
+| 🔁 **FOLLOW-UP** | After an in-game injury, within **24 hours** for tier 1–2 stars or stories that ever scored 80+, **6 hours** for everyone else: ruled out / won't return, carted off, a newly raised serious possibility ("tests to rule out a fracture"), or a major change |
 | 🔁 **MAJOR UPDATE** | Later: only a major status change (e.g. blood clot → pulmonary embolism, "knee injury" → torn ACL / surgery) |
 | 🔁 **OUTLOOK CHANGE** | A feared serious injury turns out minor (feared ACL tear → MRI shows sprain) |
 
-Not sent: pregame and fantasy status news ("will play", "cleared", "inactive", "ruled out Sunday"), low-profile players, speculation (outside doctors, "fears…"), retrospectives on old injuries, "locker room / being evaluated / re-evaluated" steps, and return-to-play news. Max 3 updates per story (outlook changes and major changes always come through).
+Pundit speculation ("Pro Football Doc fears…") is recorded but never sent; a concern raised by the team or insiders is. Not sent: pregame and fantasy status news ("will play", "cleared", "inactive", "ruled out Sunday"), low-profile players, speculation (outside doctors, "fears…"), retrospectives on old injuries, "locker room / being evaluated / re-evaluated" steps, and return-to-play news. Max 3 updates per story (outlook changes and major changes always come through).
 
 **Score = popularity (30) + buzz (30) + severity (25) + content potential (15)**, then multiplied by a league weight (NFL/NBA 1.0, MLB 0.85, NHL/soccer 0.8).
 

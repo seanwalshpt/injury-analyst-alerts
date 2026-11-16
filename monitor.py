@@ -176,12 +176,26 @@ RETRO = re.compile(
 # Speculation (outside doctors, "fears", "could be"): recorded so a later
 # "just a sprain" reads as an outlook reversal, but never an update itself.
 SPECULATION = re.compile(
-    r"\b(?:fears?|feared|fearing|predicts?|prediction|doctor|doc|could be|might be|may have|"
-    r"possible|possibly|potential|potentially|worst-case|concern for|concerns? about|believes|"
-    r"thinks|speculat\w*|expert)\b")
+    r"\b(?:predicts?|prediction|doctor|doc|believes|thinks|speculat\w*|expert|analyst|"
+    r"film breakdown|breaks down|what we know|explained)\b")
+# A serious possibility raised by the team or insiders ("tests to rule out a
+# fracture", "concern for torn ACL", "feared season-ending"). Within the
+# follow-up window this is real news; it's recorded as one fact, "possible
+# serious injury", so several outlets voicing the same concern = one update.
+STRUCTURAL = (r"(?:fracture|fractured|break|broken|tear|torn|tore|rupture|ruptured|acl|mcl|"
+              r"achilles|meniscus|labrum|ligament|season-ending|season ending|dislocation|"
+              r"dislocated|lisfranc|blood clot|clot|embolism|concussion)")
+CONCERN = re.compile(
+    r"\b(?:to rule out|rule out|ruling out|check for|checked for|tested for|testing for|"
+    r"concern(?:s|ed)? (?:for|about|over|of)|fears?|feared|fearing|possible|possibly|potential|"
+    r"potentially|could be|could have|may have|might have|worst-case|worried about|suspected)\s+"
+    r"(?:that\s+)?(?:he\s+)?(?:has\s+|have\s+|suffered\s+|to have suffered\s+)?"
+    r"(?:an?\s+|the\s+|his\s+)?(?:[a-z'-]+\s+){0,3}?" + STRUCTURAL +
+    r"(?:\s+(?:acl|mcl|achilles|ligament|meniscus|labrum|foot|ankle|knee|wrist|hand|leg|injury))?\b")
 # "MRI shows no ACL tear", "avoids torn Achilles" -> good news, not a tear.
 NEG_SEVERE = re.compile(
-    r"\b(?:no|not|isn't|wasn't|without|avoids?|avoided|dodges?|dodged|rules? out|ruled out|"
+    r"\b(?:no|not|isn't|wasn't|without|avoids?|avoided|dodges?|dodged|"
+    r"(?:mri|x-rays?|tests?|scan|imaging)\s+(?:rules?|ruled|ruling)\s+out|"
     r"free of|negative for)\s+(?:an?\s+|the\s+|any\s+|his\s+|a\s+serious\s+)?"
     r"(?:[a-z'-]+\s+){0,2}(?:tear|torn|fracture|fractured|break|broken|structural damage|"
     r"acl|mcl|achilles|ligament damage)\b")
@@ -241,7 +255,7 @@ FACT_OF = {term: fact for fact, terms in FACTS.items() for term in terms}
 LADDER = {"left the game": 1, "questionable to return": 2, "doubtful to return": 3,
           "ruled out": 4, "carted off": 5}
 # Facts important enough to skip the update cooldown.
-SIGNIFICANT = {"ruled out", "carted off", "season-ending", "surgery", "injured list",
+SIGNIFICANT = {"ruled out", "carted off", "possible serious injury", "season-ending", "surgery", "injured list",
                "concussion", "hospital", "setback", "pulmonary embolism", "cardiac",
                "blood clot", "torn", "ACL", "MCL", "Achilles", "meniscus", "labrum", "pectoral",
                "fracture", "dislocation", "spinal / neck"}
@@ -253,7 +267,7 @@ MAJOR = {"blood clot", "pulmonary embolism", "cardiac", "hospital", "season-endi
          "surgery", "torn", "ACL", "MCL", "Achilles", "meniscus", "labrum", "pectoral",
          "fracture", "dislocation", "spinal / neck"}
 # A feared serious injury that later turns out minor is also major news.
-FEARED = MAJOR | {"carted off"}
+FEARED = MAJOR | {"carted off", "possible serious injury"}
 RELIEF = {"better than feared", "minor diagnosis"}
 TIER_RANK = {"tier1": 1, "tier2": 2, "tier3": 3, "roster": 9}
 
@@ -262,6 +276,8 @@ def fact_of(term: str) -> str:
     if term in FACT_OF:
         return FACT_OF[term]
     t = term.lower()
+    if t == "possible serious injury" or t.startswith("possible: "):
+        return "possible serious injury"
     if t == "achilles":
         return "Achilles mention"  # body part alone ("Achilles injury update") isn't a tear
     for key, fact in (("acl", "ACL"), ("mcl", "MCL"), ("achilles", "Achilles"),
@@ -846,6 +862,15 @@ def analyze(item: dict):
     """Return analysis dict, or None if this isn't an injury story."""
     title_n = normalize(item["title"])
     better = bool(NEG_SEVERE.search(title_n))
+    pundit = bool(SPECULATION.search(title_n))
+    concern = []
+    cm = None if (better or pundit) else CONCERN.search(title_n)
+    if cm:
+        # Keep the injury words out of the "confirmed" facts: a feared
+        # fracture isn't a fracture. The wording is kept for the message.
+        concern = ["possible: " + cm.group(0).strip()]
+        title_n = CONCERN.sub(" serious injury concern ", title_n)
+        item = dict(item, summary="")
     if better:
         # Remove the negated injury so "no ACL tear" doesn't count as a tear.
         title_n = NEG_SEVERE.sub(" better than feared ", title_n)
@@ -895,7 +920,8 @@ def analyze(item: dict):
             re.search(r"\b(?:negative|clean|came back|revealed|reveals|showed|shows|confirm(?:s|ed)?)\b", title_n):
         title_status.append("x-rays negative" if "negative" in title_n else "mri results")
     explainer = bool(EXPLAINER.search(title_n)) and not (title_severe or milestones)
-    speculative = bool(SPECULATION.search(title_n)) and not better
+    speculative = pundit and not better
+    title_status += concern
 
     return {
         "in_game": bool(IN_GAME & set(title_status)) or "injured on the play" in title_n,
@@ -1110,6 +1136,7 @@ def merge_item(state, item, info):
     if item.get("official") or (
             info.get("in_game") and start and item["published"] >= start - timedelta(minutes=15)):
         s["acute_at"] = iso(NOW)
+        s.setdefault("acute_first", iso(NOW))
     pub = iso(min(item["published"], NOW))
     if pub < s.get("first_published", pub + "~"):
         s["first_published"] = pub
@@ -1174,12 +1201,16 @@ def format_alert(s, parts, kind: str, new_terms=None, playing: bool = False) -> 
 
     total = parts["total"]
     high = total >= SETTINGS["high_priority_threshold"]
-    acute = bool(s.get("acute_at")) and NOW - parse_iso(s["acute_at"]) <= timedelta(
-        hours=SETTINGS["acute"]["update_hours"])
+    acute = in_followup_window(s)
     if kind == "UPDATE":
         relief = bool(new_terms) and new_terms[0] == "outlook better than feared"
-        header = (f"🔁 <b>{'OUTLOOK CHANGE' if relief else 'MAJOR UPDATE' if not acute else 'IN-GAME UPDATE'}"
-                  f" · {total}/100</b>")
+        first = s.get("acute_first") or s.get("acute_at")
+        since = ""
+        if acute and first:
+            h = (NOW - parse_iso(first)).total_seconds() / 3600
+            since = f" ({int(h)}h after injury)" if h >= 1 else f" ({int(h * 60)} min after injury)"
+        label = "OUTLOOK CHANGE" if relief else "FOLLOW-UP" if acute else "MAJOR UPDATE"
+        header = f"🔁 <b>{label} · {total}/100</b>{since}"
     elif acute:
         header = f"🚑 <b>IN-GAME INJURY · {total}/100</b>"
     else:
@@ -1328,6 +1359,21 @@ def credit_other_players(state, item, info, primary_sid) -> set:
     return credited
 
 
+def followup_hours(s) -> float:
+    """How long after an in-game injury follow-ups still come through.
+    Stars (tier 1-2) and very popular stories (ever scored high priority) get
+    the long window; everyone else the short one."""
+    AC = SETTINGS["acute"]
+    big = (TIER_RANK.get(s.get("tier") or "", 99) <= TIER_RANK[AC["long_window_min_tier"]]
+           or s.get("peak_score", 0) >= SETTINGS["high_priority_threshold"])
+    return AC["long_window_hours"] if big else AC["short_window_hours"]
+
+
+def in_followup_window(s) -> bool:
+    first = s.get("acute_first") or s.get("acute_at")
+    return bool(first) and NOW - parse_iso(first) <= timedelta(hours=followup_hours(s))
+
+
 def send_alerts(state, touched, live_teams, dry_run: bool):
     AC = SETTINGS["acute"]
     threshold = SETTINGS["alert_threshold"]
@@ -1341,8 +1387,8 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
         parts = score_story(s)
         print(f"  {parts['total']:>3}  {s['league']:<6} {s['player'] or '-':<24} {s['headline'][:80]}")
         rank = TIER_RANK.get(s.get("tier") or "", 99)
-        acute = bool(s.get("acute_at")) and NOW - parse_iso(s["acute_at"]) <= timedelta(
-            hours=AC["update_hours"])
+        s["peak_score"] = max(s.get("peak_score", 0), parts["total"])
+        acute = in_followup_window(s)
         # Only facts reported as status (not speculation) open the star exception.
         facts_now = {fact_of(t) for t in s.get("pending", [])}
         if not s["alerted"]:
@@ -1366,7 +1412,7 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
             major = [f for f in new_all if f in MAJOR]
             ever = {fact_of(t) for t in s["terms"]} | known
             relief = bool(ever & FEARED) and any(f in RELIEF for f in new_all)
-            in_game = [f for f in new_all if f in ("ruled out", "carted off")]
+            in_game = [f for f in new_all if f in ("ruled out", "carted off", "possible serious injury")]
             if acute:
                 # During/just after the game: escalations that matter.
                 send = bool(major or relief or in_game)
@@ -1377,6 +1423,7 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
             capped = s["updates_sent"] >= SETTINGS["max_updates_per_story"] and not (relief or major)
             if send and not capped:
                 shown = drop_subphrases([t for t in s.get("pending", []) if fact_of(t) in new_all])
+                shown = [t[len("possible: "):] if t.startswith("possible: ") else t for t in shown]
                 if relief:
                     shown = ["outlook better than feared"] + [
                         t for t in shown if fact_of(t) in ("minor diagnosis", "timeline")]
