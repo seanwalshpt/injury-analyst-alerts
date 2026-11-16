@@ -15,7 +15,7 @@ Updates after that are rare:
 
 | Update | When |
 |---|---|
-| 🔁 **IN-GAME UPDATE** | Within 6 hours of the in-game injury: ruled out / won't return, carted off, or a major change |
+| 🔁 **IN-GAME UPDATE** | Within 12 hours of the in-game injury (when viewers are searching it): ruled out / won't return, carted off, or a major change |
 | 🔁 **MAJOR UPDATE** | Later: only a major status change (e.g. blood clot → pulmonary embolism, "knee injury" → torn ACL / surgery) |
 | 🔁 **OUTLOOK CHANGE** | A feared serious injury turns out minor (feared ACL tear → MRI shows sprain) |
 

@@ -1,11 +1,11 @@
 {
   "_how_to_edit": "Tuning knobs for the monitor. Safe to change numbers here without touching the Python code.",
 
-  "_alert_rules": "Two kinds of alerts. IN-GAME: a listed player (tier1-3 in players.json) hurt in a game that's on now or ended within acute.postgame_hours, scoring alert_threshold+. MAJOR NEWS: anything else needs news_alert_threshold+, except a tier1-2 star with a major status change (blood clot, tear, fracture, surgery, season-ending...). Updates: during/just after the game only 'ruled out', 'carted off', or a major change; afterwards only a major change or an outlook reversal (feared tear -> just a sprain).",
+  "_alert_rules": "Two kinds of alerts. IN-GAME: a listed player (tier1-3 in players.json) hurt in a game that's on now or ended within acute.postgame_hours, scoring alert_threshold+. MAJOR NEWS: anything else needs news_alert_threshold+, except a tier1-2 star with a major status change (blood clot, tear, fracture, surgery, season-ending...). Updates: within acute.update_hours of the injury (the window when people are searching it) only 'ruled out', 'carted off', or a major change; afterwards only a major change or an outlook reversal (feared tear -> just a sprain).",
   "alert_threshold": 60,
   "news_alert_threshold": 85,
   "major_min_tier": "tier2",
-  "acute": {"min_tier": "tier3", "postgame_hours": 3, "update_hours": 6},
+  "acute": {"min_tier": "tier3", "postgame_hours": 3, "update_hours": 12},
   "high_priority_threshold": 80,
 
   "max_story_age_hours": 3,
