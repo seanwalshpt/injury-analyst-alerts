@@ -4,11 +4,22 @@ Automated sports injury monitoring for **The Injury Analyst**. GitHub runs `moni
 
 ## How alerts work
 
-| Score | What you get |
+There are only two kinds of alerts:
+
+| Alert | When you get it |
 |---|---|
-| 80–100 | 🚨 **High priority**: strong TikTok candidate |
-| 60–79 | ⚠️ **Injury alert**: worth checking the replay |
-| below 60 | Recorded, no alert (planned: daily digest) |
+| 🚑 **IN-GAME INJURY** | A listed player (tier 1–3 in `config/players.json`) is hurt in a game that's on now or ended within the last 3 hours, and the score is 60+ |
+| 📰 **MAJOR NEWS** | Any other story scoring **85+**, or a tier 1–2 star with a major status change (blood clot, embolism, cardiac, hospitalized, tear, fracture, surgery, season-ending) |
+
+Updates after that are rare:
+
+| Update | When |
+|---|---|
+| 🔁 **IN-GAME UPDATE** | Within 6 hours of the in-game injury: ruled out / won't return, carted off, or a major change |
+| 🔁 **MAJOR UPDATE** | Later: only a major status change (e.g. blood clot → pulmonary embolism, "knee injury" → torn ACL / surgery) |
+| 🔁 **OUTLOOK CHANGE** | A feared serious injury turns out minor (feared ACL tear → MRI shows sprain) |
+
+Not sent: pregame and fantasy status news ("will play", "cleared", "inactive", "ruled out Sunday"), low-profile players, speculation (outside doctors, "fears…"), retrospectives on old injuries, "locker room / being evaluated / re-evaluated" steps, and return-to-play news. Max 3 updates per story (outlook changes and major changes always come through).
 
 **Score = popularity (30) + buzz (30) + severity (25) + content potential (15)**, then multiplied by a league weight (NFL/NBA 1.0, MLB 0.85, NHL/soccer 0.8).
 

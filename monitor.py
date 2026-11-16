@@ -85,7 +85,7 @@ HIGH = [  # 18 pts: left the game / real concern
     "concussion", "concussion protocol", "head injury", "mri", "x-rays", "x-ray",
     "ambulance", "hospital", "hospitalized", "went down", "goes down", "down on the field",
     "down on the court", "injury scare", "in pain", "will miss", "to miss", "sidelined",
-    "ruled out", "injured reserve", "10-day il", "15-day il", "60-day il", "injured list",
+    "ruled out", "injured on the play", "injured reserve", "10-day il", "15-day il", "60-day il", "injured list",
     # Held out before a game
     "held out", "won't play", "will not play",
     # Practice injuries
@@ -103,6 +103,7 @@ MILESTONES = [
     "cleared", "activated", "reinstated", "returns to practice", "back at practice",
     "set to return", "expected to return", "will return", "will play", "will start",
     "designated to return", "21-day window", "back in lineup", "back in the lineup",
+    "better than feared", "not as serious", "not serious", "no tear",
     # Diagnosis / imaging results after an exit (good or bad, it's new info)
     "bone bruise", "sprain", "sprained", "high ankle sprain", "strain", "strained",
     "grade 1", "grade 2", "grade 3", "mri results", "mri revealed", "mri reveals",
@@ -165,6 +166,25 @@ SOFT_NEWS = [
 # update if the headline also contains a concrete diagnosis or status.
 EXPLAINER = re.compile(r"^(?:why|how|what|should|could|is|are|will|does|did)\b|\?\s*$")
 NOT_STATUS = {"hospital", "in pain"}
+# Looking back on an old injury, or injury words used as idioms. These are
+# never treated as news about a current injury.
+RETRO = re.compile(
+    r"\b(?:years? (?:after|ago|since)|last season|a year after|100%|healed|came back early|"
+    r"comeback|opens up|reflects|gets emotional|answers if|bigger role|still earn|"
+    r"end zone|locker room culture|in the locker room'|right guys in the locker room|"
+    r"former|ex-|recalls|remembers|looks back)\b")
+# Speculation (outside doctors, "fears", "could be"): recorded so a later
+# "just a sprain" reads as an outlook reversal, but never an update itself.
+SPECULATION = re.compile(
+    r"\b(?:fears?|feared|fearing|predicts?|prediction|doctor|doc|could be|might be|may have|"
+    r"possible|possibly|potential|potentially|worst-case|concern for|concerns? about|believes|"
+    r"thinks|speculat\w*|expert)\b")
+# "MRI shows no ACL tear", "avoids torn Achilles" -> good news, not a tear.
+NEG_SEVERE = re.compile(
+    r"\b(?:no|not|isn't|wasn't|without|avoids?|avoided|dodges?|dodged|rules? out|ruled out|"
+    r"free of|negative for)\s+(?:an?\s+|the\s+|any\s+|his\s+|a\s+serious\s+)?"
+    r"(?:[a-z'-]+\s+){0,2}(?:tear|torn|fracture|fractured|break|broken|structural damage|"
+    r"acl|mcl|achilles|ligament damage)\b")
 # In-game status changes that skip the 30-minute update cooldown.
 URGENT = {"ruled out", "will not return", "won't return", "ruled out for the rest",
           "out for the rest of the game", "carted off"}  # too vague to count as a status change
@@ -190,10 +210,11 @@ FACTS = {
     "carted off": ["carted off", "carted", "stretcher", "stretchered", "ambulance"],
     "tests scheduled": ["mri", "x-rays", "x-ray", "further tests", "more tests", "underwent tests",
                         "undergo tests", "evaluated", "being evaluated"],
+    "better than feared": ["better than feared", "no structural damage", "avoids serious injury",
+                           "avoided serious injury", "dodges serious injury", "x-rays negative",
+                           "negative x-rays", "not as serious", "not serious", "no tear"],
     "test results": ["mri results", "mri revealed", "mri reveals", "mri showed", "mri shows",
-                     "mri confirms", "mri confirmed", "imaging", "x-rays negative", "negative x-rays",
-                     "no structural damage", "avoids serious injury", "avoided serious injury",
-                     "dodges serious injury", "diagnosed", "diagnosis"],
+                     "mri confirms", "mri confirmed", "imaging", "diagnosed", "diagnosis"],
     "minor diagnosis": ["sprain", "sprained", "high ankle sprain", "strain", "strained", "grade 1",
                         "grade 2", "grade 3", "bone bruise", "contusion", "hyperextended",
                         "hyperextension", "subluxation"],
@@ -226,12 +247,23 @@ SIGNIFICANT = {"ruled out", "carted off", "season-ending", "surgery", "injured l
                "fracture", "dislocation", "spinal / neck"}
 # Never news by themselves.
 IGNORED_FACTS = {"tests scheduled"}
+# Outside the game itself, only these count as a major status change:
+# potentially life-threatening, or a long-term/structural injury.
+MAJOR = {"blood clot", "pulmonary embolism", "cardiac", "hospital", "season-ending",
+         "surgery", "torn", "ACL", "MCL", "Achilles", "meniscus", "labrum", "pectoral",
+         "fracture", "dislocation", "spinal / neck"}
+# A feared serious injury that later turns out minor is also major news.
+FEARED = MAJOR | {"carted off"}
+RELIEF = {"better than feared", "minor diagnosis"}
+TIER_RANK = {"tier1": 1, "tier2": 2, "tier3": 3, "roster": 9}
 
 
 def fact_of(term: str) -> str:
     if term in FACT_OF:
         return FACT_OF[term]
     t = term.lower()
+    if t == "achilles":
+        return "Achilles mention"  # body part alone ("Achilles injury update") isn't a tear
     for key, fact in (("acl", "ACL"), ("mcl", "MCL"), ("achilles", "Achilles"),
                       ("meniscus", "meniscus"), ("labrum", "labrum"), ("pec", "pectoral"),
                       ("fractur", "fracture"), ("broken", "fracture"), ("dislocat", "dislocation"),
@@ -252,6 +284,8 @@ def new_facts(pending, already_terms):
             continue
         if f in LADDER and LADDER[f] <= top:
             continue  # e.g. "questionable" after "ruled out"
+        if f == "torn" and known & {"ACL", "MCL", "Achilles", "meniscus", "labrum", "pectoral"}:
+            continue  # "torn" adds nothing to an already-reported ACL tear
         fresh.append(f)
     # Only report the highest new rung of the ladder.
     rungs = [f for f in fresh if f in LADDER]
@@ -413,6 +447,8 @@ def find_players(text: str, feed_league: str, raw: str = ""):
 # Rosters: recognize every current player, not just the hand-picked list.
 # Pulled from ESPN's public team rosters, refreshed daily, one league per run.
 # ---------------------------------------------------------------------------
+
+GAME_WINDOWS = {}  # {league: {team name: game start}} for games on now / just ended
 
 ROSTER_FILE = ROOT / "state" / "rosters.json"
 ROSTER_SPORTS = {"nfl": "football/nfl", "nba": "basketball/nba", "mlb": "baseball/mlb", "nhl": "hockey/nhl"}
@@ -643,6 +679,8 @@ def detect_live_games():
     lm = SETTINGS.get("live_mode", {})
     if not lm.get("enabled"):
         return {}, False, []
+    GAME_WINDOWS.clear()
+    acute_post = timedelta(hours=SETTINGS["acute"]["postgame_hours"])
     live, soon, events = {}, False, []
     lookahead = timedelta(hours=lm.get("chain_lookahead_hours", 8))
     for league, urls in lm["scoreboards"].items():
@@ -667,6 +705,15 @@ def detect_live_games():
                     continue
                 if state == "pre" and start - NOW <= lookahead:
                     soon = True
+                # Games in progress or ended in the last few hours: an in-game
+                # injury reported now for these teams "just happened".
+                if state == "in" or (state == "post" and NOW <= start + game_len + acute_post):
+                    for comp in ev.get("competitions", [])[:1]:
+                        for c in comp.get("competitors", []):
+                            team = c.get("team") or {}
+                            for key in ("name", "shortDisplayName", "displayName"):
+                                if team.get(key):
+                                    GAME_WINDOWS.setdefault(league, {})[team[key]] = start
                 if state == "in":
                     why = "in progress"
                 elif state == "pre" and start - pre <= NOW:
@@ -708,7 +755,9 @@ SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
 
 
 def resolve_abbrev(abbrev: str, team_names: set):
-    """'L.Jackson' on the Ravens -> ('Lamar Jackson', 'Ravens')."""
+    """'L.Jackson' on the Ravens -> ('Lamar Jackson', 'Ravens').
+    Also handles team-prefixed names like 'DET-A.Hutchinson'."""
+    abbrev = re.sub(r"^[A-Z]{2,4}-", "", abbrev)
     toks = [t for t in name_tokens(abbrev.replace(".", ". ")) if t not in SUFFIXES]
     if len(toks) < 2:
         return None, None
@@ -763,7 +812,8 @@ def fetch_pbp(events, state):
                     status = f", {ret.group(1).lower()} to return"
                 else:
                     status = ""
-                who = f"{team}' {name}" if team and team.endswith("s") else (f"{team}'s {name}" if team else m.group(1))
+                raw = re.sub(r"^[A-Z]{2,4}-", "", m.group(1))
+                who = f"{team}' {name}" if team and team.endswith("s") else (f"{team}'s {name}" if team else raw)
                 STATS["pbp_injuries"] += 1
                 print(f"  + play-by-play: {who} injured{status}")
                 # Wording sets severity: "questionable"/unspecified is often a
@@ -775,7 +825,7 @@ def fetch_pbp(events, state):
                 elif serious:
                     what = "injured on the play, left the game"
                 else:
-                    what = "injured on the play"
+                    what = "hurt on the play"
                 items.append({
                     "title": f"{who} {what}{status}",
                     "link": f"https://www.espn.com/nfl/game/_/gameId/{ev['id']}",
@@ -795,7 +845,12 @@ def fetch_pbp(events, state):
 def analyze(item: dict):
     """Return analysis dict, or None if this isn't an injury story."""
     title_n = normalize(item["title"])
-    text_n = normalize(item["title"] + " " + item["summary"])
+    better = bool(NEG_SEVERE.search(title_n))
+    if better:
+        # Remove the negated injury so "no ACL tear" doesn't count as a tear.
+        title_n = NEG_SEVERE.sub(" better than feared ", title_n)
+        item = dict(item, summary="")
+    text_n = normalize(title_n + " " + item["summary"])
 
     severe, high, medium, low = (matches(rx, text_n) for rx in (SEVERE_RX, HIGH_RX, MEDIUM_RX, LOW_RX))
     milestones = matches(MILESTONE_RX, NEGATED.sub(" ", title_n))
@@ -831,7 +886,7 @@ def analyze(item: dict):
 
     # What does the headline itself report? (Article summaries can mention
     # old details, so updates are judged on the headline alone.)
-    soft = bool(matches(SOFT_RX, title_n))
+    soft = bool(matches(SOFT_RX, title_n)) or bool(RETRO.search(title_n))
     title_severe = matches(SEVERE_RX, title_n)
     title_status = [t for t in title_severe + matches(HIGH_RX, title_n) if t not in NOT_STATUS]
     title_status += milestones
@@ -840,11 +895,12 @@ def analyze(item: dict):
             re.search(r"\b(?:negative|clean|came back|revealed|reveals|showed|shows|confirm(?:s|ed)?)\b", title_n):
         title_status.append("x-rays negative" if "negative" in title_n else "mri results")
     explainer = bool(EXPLAINER.search(title_n)) and not (title_severe or milestones)
+    speculative = bool(SPECULATION.search(title_n)) and not better
 
     return {
         "in_game": bool(IN_GAME & set(title_status)) or "injured on the play" in title_n,
         "soft": soft,
-        "update_terms": [] if (soft or explainer) else sorted(set(title_status)),
+        "update_terms": [] if (soft or explainer or speculative) else sorted(set(title_status)),
         "player": player["name"] if player else None,
         "tier": player["tier"] if player else None,
         "league": league,
@@ -860,28 +916,42 @@ def analyze(item: dict):
     }
 
 
+REPLACEMENT = re.compile(
+    r"(?:replaced by|in place of|backup|rookie|takes over for)\s+(?:qb\s+|rookie\s+)?$")
+
+
 def pick_injured_player(players, title_n: str):
-    """With several players in one headline ("LeBron scores 40 as Suggs exits
-    with knee injury"), pick the one named closest to the injury wording."""
+    """With several players in one headline, pick the injured one: the first
+    player named in the first clause that also contains injury wording.
+      "LeBron scores 40 as Lakers rout Magic; Suggs exits with knee injury" -> Suggs
+      "Drake Maye exits with ankle injury, Tommy DeVito enters" -> Maye
+      "Bowers ruled out as Fernando Mendoza makes first start" -> Bowers
+    Returns None if no clause pairs a player with injury wording."""
     if len(players) <= 1:
         return players[0] if players else None
-    term_pos = [m.start() for rx_list in (SEVERE_RX, HIGH_RX, MEDIUM_RX)
-                for _, rx in rx_list for m in rx.finditer(title_n)]
-    if not term_pos:
-        return players[0]
 
-    def name_pos(p):
+    def name_pos(p, text):
         full = normalize(p["name"])
-        i = title_n.find(full)
+        i = text.find(full)
         if i < 0:
-            i = title_n.find(full.split()[-1])
+            i = text.find(full.split()[-1])
         return i
 
-    def distance(p):
-        i = name_pos(p)
-        return min(abs(i - t) for t in term_pos) if i >= 0 else 10**6
+    def has_terms(text):
+        return any(rx.search(text) for rx_list in (SEVERE_RX, HIGH_RX, MEDIUM_RX) for _, rx in rx_list)
 
-    return min(players, key=distance)  # stable: ties keep tier order
+    named = [(p, name_pos(p, title_n)) for p in players]
+    named = [(p, i) for p, i in named if i >= 0 and not REPLACEMENT.search(title_n[:i])]
+    if not named:
+        return None
+    named.sort(key=lambda x: x[1])
+    # Segment the headline by player mentions: each player gets the text from
+    # their name up to the next player's name.
+    for k, (p, i) in enumerate(named):
+        seg_end = named[k + 1][1] if k + 1 < len(named) else len(title_n)
+        if has_terms(title_n[i:seg_end]):
+            return p
+    return None
 
 
 def popularity_points(story) -> int:
@@ -1032,6 +1102,14 @@ def merge_item(state, item, info):
     s["last_seen"] = iso(NOW)
     if item.get("official"):
         s["official_at"] = iso(NOW)
+    # Acute = it just happened in a game: from the play-by-play, or in-game
+    # wording ("left the game", "won't return", "carted off") about a team
+    # whose game is on now or just ended, published after kickoff.
+    team = s.get("team") or info.get("team")
+    start = GAME_WINDOWS.get(info["league"], {}).get(team) if team else None
+    if item.get("official") or (
+            info.get("in_game") and start and item["published"] >= start - timedelta(minutes=15)):
+        s["acute_at"] = iso(NOW)
     pub = iso(min(item["published"], NOW))
     if pub < s.get("first_published", pub + "~"):
         s["first_published"] = pub
@@ -1080,7 +1158,7 @@ IN_GAME = {
 def recommendation(s, total: int, kind: str) -> str:
     on_video = bool(IN_GAME & set(s["terms"]))
     if kind == "UPDATE":
-        return "📌 Storyline update. Possible follow-up video on what this changes for recovery."
+        return "📌 Major change. Possible follow-up video on what this means for recovery."
     if total >= SETTINGS["high_priority_threshold"]:
         return ("🎬 Strong TikTok candidate. Find the replay and film early." if on_video
                 else "🎬 Strong TikTok candidate. Big medical/status news; explain what it means.")
@@ -1096,12 +1174,16 @@ def format_alert(s, parts, kind: str, new_terms=None, playing: bool = False) -> 
 
     total = parts["total"]
     high = total >= SETTINGS["high_priority_threshold"]
+    acute = bool(s.get("acute_at")) and NOW - parse_iso(s["acute_at"]) <= timedelta(
+        hours=SETTINGS["acute"]["update_hours"])
     if kind == "UPDATE":
-        header = f"🔁 <b>UPDATE · {total}/100</b>"
-    elif high:
-        header = f"🚨 <b>HIGH PRIORITY · {total}/100</b>"
+        relief = bool(new_terms) and new_terms[0] == "outlook better than feared"
+        header = (f"🔁 <b>{'OUTLOOK CHANGE' if relief else 'MAJOR UPDATE' if not acute else 'IN-GAME UPDATE'}"
+                  f" · {total}/100</b>")
+    elif acute:
+        header = f"🚑 <b>IN-GAME INJURY · {total}/100</b>"
     else:
-        header = f"⚠️ <b>Injury alert · {total}/100</b>"
+        header = f"📰 <b>MAJOR NEWS · {total}/100</b>"
 
     who = s["player"] or "Unidentified player"
     line2 = " · ".join(x for x in (who, s.get("team"), LEAGUE_LABEL.get(s["league"], s["league"].upper())) if x)
@@ -1247,6 +1329,7 @@ def credit_other_players(state, item, info, primary_sid) -> set:
 
 
 def send_alerts(state, touched, live_teams, dry_run: bool):
+    AC = SETTINGS["acute"]
     threshold = SETTINGS["alert_threshold"]
     high = SETTINGS["high_priority_threshold"]
     alerts = []
@@ -1257,31 +1340,47 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
         s = state["stories"][sid]
         parts = score_story(s)
         print(f"  {parts['total']:>3}  {s['league']:<6} {s['player'] or '-':<24} {s['headline'][:80]}")
+        rank = TIER_RANK.get(s.get("tier") or "", 99)
+        acute = bool(s.get("acute_at")) and NOW - parse_iso(s["acute_at"]) <= timedelta(
+            hours=AC["update_hours"])
+        # Only facts reported as status (not speculation) open the star exception.
+        facts_now = {fact_of(t) for t in s.get("pending", [])}
         if not s["alerted"]:
-            if parts["total"] >= threshold:
+            # 1) Acute: a listed player hurt in a game that's on / just ended.
+            if acute and rank <= TIER_RANK[AC["min_tier"]] and parts["total"] >= threshold:
                 alerts.append((sid, parts, "NEW", None))
-        elif s["updates_sent"] < SETTINGS["max_updates_per_story"] and (
-                s.get("notified") or parts["total"] >= threshold):
-            # Once you've been alerted about a story, every real development
-            # gets an update, even after the initial buzz has died down.
-            # Only details reported in a news headline count (see analyze()).
-            # Compare facts, not wording: rephrasings by other outlets and
-            # more coverage alone are never an update.
-            new_all = new_facts(s.get("pending", []), s["alerted_terms"])
-            urgent = [f for f in new_all if f in SIGNIFICANT]
-            last = s.get("last_alert")
-            cooled = last is None or NOW - parse_iso(last) >= timedelta(
-                minutes=SETTINGS["update_cooldown_minutes"])
-            # Significant new fact (ruled out, carted off, tear, surgery...):
-            # send right away. Other new facts: wait out the cooldown so a
-            # story produces at most one message per cooldown period.
-            if urgent or (new_all and cooled):
-                # Show the reported wording ("high ankle sprain, week-to-week"),
-                # not the internal category names.
+            # 2) News: only the biggest stories...
+            elif parts["total"] >= SETTINGS["news_alert_threshold"]:
+                alerts.append((sid, parts, "NEW", None))
+            # ...or a star with a major status change (blood clot, tear,
+            # season-ending, surgery...), even if coverage is still building.
+            elif (rank <= TIER_RANK[SETTINGS["major_min_tier"]] and facts_now & MAJOR
+                  and parts["total"] >= threshold):
+                alerts.append((sid, parts, "NEW", None))
+            else:
+                s["pending"] = []  # not alert-worthy; don't hold its news
+        elif s.get("notified"):
+            already = s["alerted_terms"]
+            new_all = new_facts(s.get("pending", []), already)
+            known = {fact_of(t) for t in already}
+            major = [f for f in new_all if f in MAJOR]
+            ever = {fact_of(t) for t in s["terms"]} | known
+            relief = bool(ever & FEARED) and any(f in RELIEF for f in new_all)
+            in_game = [f for f in new_all if f in ("ruled out", "carted off")]
+            if acute:
+                # During/just after the game: escalations that matter.
+                send = bool(major or relief or in_game)
+            else:
+                # Afterwards: only major status changes or an outlook reversal
+                # (feared ACL tear -> just a sprain).
+                send = bool(major or relief)
+            capped = s["updates_sent"] >= SETTINGS["max_updates_per_story"] and not (relief or major)
+            if send and not capped:
                 shown = drop_subphrases([t for t in s.get("pending", []) if fact_of(t) in new_all])
+                if relief:
+                    shown = ["outlook better than feared"] + [
+                        t for t in shown if fact_of(t) in ("minor diagnosis", "timeline")]
                 alerts.append((sid, parts, "UPDATE", shown or new_all))
-            elif new_all:
-                deferred.add(sid)  # real news, but we just messaged about this story
 
     alerts.sort(key=lambda a: -a[1]["total"])
     failed = set()
