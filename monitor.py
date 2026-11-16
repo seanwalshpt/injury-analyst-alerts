@@ -1388,6 +1388,11 @@ def send_alerts(state, touched, live_teams, dry_run: bool):
         print(f"  {parts['total']:>3}  {s['league']:<6} {s['player'] or '-':<24} {s['headline'][:80]}")
         rank = TIER_RANK.get(s.get("tier") or "", 99)
         s["peak_score"] = max(s.get("peak_score", 0), parts["total"])
+        # One-time: stories alerted before in-game tracking existed (Nov 16)
+        # start their follow-up window when they were first seen.
+        if (not s.get("acute_first") and s.get("notified") and IN_GAME & set(s["terms"])
+                and s["first_seen"] < "2026-11-16T15:00:00"):
+            s["acute_first"] = s["first_seen"]
         acute = in_followup_window(s)
         # Only facts reported as status (not speculation) open the star exception.
         facts_now = {fact_of(t) for t in s.get("pending", [])}
